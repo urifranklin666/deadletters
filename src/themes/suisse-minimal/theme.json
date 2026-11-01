@@ -1,0 +1,20 @@
+{
+  "slug": "suisse-minimal",
+  "name": "Suisse International Atelier",
+  "version": "1.0.0",
+  "author": "deadplug.digital",
+  "description": "Pure Swiss modernist typography grid, high contrast monochrome, generous whitespace and editorial serenity.",
+  "preview_image": "/uploads/deadplug_editorial_cover.jpg",
+  "defaults": {
+    "accent_color": "#FFFFFF",
+    "bg_color": "#0D0D0E",
+    "card_bg": "#141416",
+    "text_color": "#FAFAFA",
+    "text_muted": "#A1A1AA",
+    "font_heading": "'Inter', -apple-system, sans-serif",
+    "font_body": "'Inter', -apple-system, sans-serif",
+    "font_mono": "'JetBrains Mono', monospace",
+    "border_radius": "0px",
+    "container_width": "1140px"
+  }
+}

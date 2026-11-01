@@ -1,0 +1,51 @@
+/* Deadplug Signature Editorial Theme */
+:root[data-theme="deadplug-editorial"] {
+  --dl-accent: #D6FF00;
+  --dl-accent-glow: rgba(214, 255, 0, 0.25);
+  --dl-bg: #08090B;
+  --dl-bg-surface: #101216;
+  --dl-bg-surface-elevated: #181B22;
+  --dl-border: #22262F;
+  --dl-border-strong: #363C4A;
+  --dl-text: #F0F2F5;
+  --dl-text-muted: #8A909E;
+  --dl-font-heading: 'Syne', sans-serif;
+  --dl-font-serif: 'Instrument Serif', Georgia, serif;
+  --dl-font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --dl-font-mono: 'JetBrains Mono', monospace;
+  --dl-radius: 0px;
+}
+
+[data-theme="deadplug-editorial"] .dl-hero-title {
+  font-family: var(--dl-font-heading);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  text-transform: uppercase;
+  background: linear-gradient(180deg, #FFFFFF 0%, #8A909E 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+[data-theme="deadplug-editorial"] .dl-post-card {
+  border: 1px solid var(--dl-border);
+  background: var(--dl-bg-surface);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+[data-theme="deadplug-editorial"] .dl-post-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--dl-accent);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6), 0 0 15px var(--dl-accent-glow);
+}
+
+[data-theme="deadplug-editorial"] .dl-drop-badge {
+  font-family: var(--dl-font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  background: var(--dl-accent);
+  color: #000;
+  font-weight: 700;
+  padding: 3px 8px;
+  display: inline-flex;
+  align-items: center;
+}

@@ -1,0 +1,22 @@
+/* Suisse International Atelier Theme */
+:root[data-theme="suisse-minimal"] {
+  --dl-accent: #FFFFFF;
+  --dl-accent-glow: rgba(255, 255, 255, 0.2);
+  --dl-bg: #0D0D0E;
+  --dl-bg-surface: #141416;
+  --dl-bg-surface-elevated: #1C1C20;
+  --dl-border: #27272A;
+  --dl-border-strong: #3F3F46;
+  --dl-text: #FAFAFA;
+  --dl-text-muted: #A1A1AA;
+  --dl-font-heading: 'Inter', -apple-system, sans-serif;
+  --dl-font-serif: 'Inter', -apple-system, sans-serif;
+  --dl-font-body: 'Inter', -apple-system, sans-serif;
+  --dl-font-mono: 'JetBrains Mono', monospace;
+  --dl-radius: 0px;
+}
+
+[data-theme="suisse-minimal"] .dl-post-card {
+  border: 1px solid var(--dl-border);
+  box-shadow: none;
+}

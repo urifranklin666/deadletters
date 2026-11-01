@@ -1,0 +1,587 @@
+/* ==========================================================================
+   DEADLETTERS CONTROL PANEL & STUDIO STYLES
+   Atelier Control Interface for deadplug.digital
+   ========================================================================== */
+
+/* Admin Layout Grid */
+.dl-admin-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  min-height: 100vh;
+  background: var(--dl-black);
+}
+
+/* Sidebar Dock */
+.dl-admin-sidebar {
+  background: var(--dl-obsidian);
+  border-right: 1px solid var(--dl-border);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  z-index: 100;
+}
+
+.dl-sidebar-header {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--dl-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dl-sidebar-brand {
+  font-family: var(--dl-font-heading);
+  font-weight: 800;
+  font-size: 1.1rem;
+  letter-spacing: -0.02em;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.dl-sidebar-version {
+  font-family: var(--dl-font-mono);
+  font-size: 0.65rem;
+  color: var(--dl-accent);
+  border: 1px solid var(--dl-accent);
+  padding: 1px 4px;
+}
+
+.dl-sidebar-nav {
+  padding: 1rem 0;
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.dl-nav-category {
+  font-family: var(--dl-font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--dl-text-faint);
+  padding: 0.75rem 1.5rem 0.25rem;
+}
+
+.dl-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1.5rem;
+  color: var(--dl-text-muted);
+  font-size: 0.88rem;
+  font-weight: 500;
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  transition: var(--dl-transition);
+}
+
+.dl-sidebar-item:hover {
+  color: var(--dl-text);
+  background: var(--dl-surface);
+}
+
+.dl-sidebar-item.active {
+  color: var(--dl-text);
+  background: var(--dl-surface);
+  border-left-color: var(--dl-accent);
+  font-weight: 600;
+}
+
+.dl-sidebar-item .dl-item-badge {
+  margin-left: auto;
+  font-family: var(--dl-font-mono);
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  background: var(--dl-surface-elevated);
+  border: 1px solid var(--dl-border);
+  color: var(--dl-text-muted);
+}
+
+.dl-sidebar-footer {
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--dl-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--dl-surface);
+}
+
+.dl-operator-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  overflow: hidden;
+}
+
+.dl-operator-pill img {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--dl-border-strong);
+}
+
+.dl-operator-details {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.dl-operator-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dl-operator-role {
+  font-family: var(--dl-font-mono);
+  font-size: 0.65rem;
+  color: var(--dl-accent);
+  text-transform: uppercase;
+}
+
+/* Main Content Wrapper */
+.dl-admin-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+.dl-admin-topbar {
+  height: var(--dl-header-height);
+  background: rgba(13, 15, 19, 0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--dl-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2rem;
+  position: sticky;
+  top: 0;
+  z-index: 90;
+}
+
+.dl-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.dl-page-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.dl-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.dl-admin-content {
+  padding: 2rem;
+  flex: 1;
+}
+
+/* Telemetry Dashboard HUD */
+.dl-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.25rem;
+  margin-bottom: 2rem;
+}
+
+.dl-metric-card {
+  background: var(--dl-obsidian);
+  border: 1px solid var(--dl-border);
+  padding: 1.25rem;
+  position: relative;
+  overflow: hidden;
+  transition: var(--dl-transition);
+}
+
+.dl-metric-card:hover {
+  border-color: var(--dl-border-strong);
+  transform: translateY(-2px);
+}
+
+.dl-metric-card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 2px;
+  background: linear-gradient(90deg, var(--dl-accent), transparent);
+  opacity: 0.7;
+}
+
+.dl-metric-label {
+  font-family: var(--dl-font-mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--dl-text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.dl-metric-val {
+  font-family: var(--dl-font-heading);
+  font-size: 2.2rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--dl-text);
+  margin-bottom: 0.5rem;
+}
+
+.dl-metric-meta {
+  font-family: var(--dl-font-mono);
+  font-size: 0.7rem;
+  color: var(--dl-text-faint);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Post Editor Studio */
+.dl-editor-studio {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 2rem;
+}
+
+.dl-editor-main {
+  background: var(--dl-obsidian);
+  border: 1px solid var(--dl-border);
+  display: flex;
+  flex-direction: column;
+}
+
+.dl-editor-header {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--dl-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--dl-surface);
+}
+
+.dl-editor-mode-toggle {
+  display: flex;
+  border: 1px solid var(--dl-border);
+  background: var(--dl-black);
+}
+
+.dl-mode-btn {
+  padding: 0.35rem 0.85rem;
+  font-family: var(--dl-font-mono);
+  font-size: 0.75rem;
+  border: none;
+  background: transparent;
+  color: var(--dl-text-muted);
+  cursor: pointer;
+  transition: var(--dl-transition);
+}
+
+.dl-mode-btn.active {
+  background: var(--dl-accent);
+  color: #000;
+  font-weight: 700;
+}
+
+.dl-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1.5rem;
+  background: var(--dl-surface);
+  border-bottom: 1px solid var(--dl-border);
+  overflow-x: auto;
+}
+
+.dl-tool-btn {
+  background: var(--dl-surface-elevated);
+  border: 1px solid var(--dl-border);
+  color: var(--dl-text);
+  padding: 0.3rem 0.6rem;
+  font-family: var(--dl-font-mono);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: var(--dl-transition);
+}
+
+.dl-tool-btn:hover {
+  border-color: var(--dl-accent);
+  color: var(--dl-accent);
+}
+
+.dl-title-input {
+  font-family: var(--dl-font-heading);
+  font-size: 1.8rem;
+  font-weight: 800;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--dl-border);
+  padding: 1.5rem;
+  color: #fff;
+  outline: none;
+  width: 100%;
+}
+
+.dl-content-textarea {
+  font-family: var(--dl-font-mono);
+  font-size: 0.95rem;
+  line-height: 1.7;
+  padding: 1.5rem;
+  background: transparent;
+  border: none;
+  color: var(--dl-text);
+  outline: none;
+  resize: vertical;
+  min-height: 480px;
+  width: 100%;
+}
+
+.dl-editor-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.dl-sidebar-box {
+  background: var(--dl-obsidian);
+  border: 1px solid var(--dl-border);
+  padding: 1.25rem;
+}
+
+.dl-box-title {
+  font-family: var(--dl-font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dl-text-muted);
+  border-bottom: 1px solid var(--dl-border);
+  padding-bottom: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+/* Media Vault Grid */
+.dl-media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 1.25rem;
+  margin-top: 1.5rem;
+}
+
+.dl-media-card {
+  background: var(--dl-obsidian);
+  border: 1px solid var(--dl-border);
+  overflow: hidden;
+  position: relative;
+  transition: var(--dl-transition);
+  display: flex;
+  flex-direction: column;
+}
+
+.dl-media-card:hover {
+  border-color: var(--dl-accent);
+}
+
+.dl-media-thumb {
+  height: 140px;
+  width: 100%;
+  object-fit: cover;
+  background: var(--dl-surface);
+}
+
+.dl-media-info {
+  padding: 0.75rem;
+  font-family: var(--dl-font-mono);
+  font-size: 0.72rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.dl-media-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--dl-text);
+}
+
+.dl-media-meta {
+  color: var(--dl-text-faint);
+  display: flex;
+  justify-content: space-between;
+}
+
+/* Theme Studio */
+.dl-themes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.dl-theme-card {
+  border: 1px solid var(--dl-border);
+  background: var(--dl-obsidian);
+  overflow: hidden;
+  transition: var(--dl-transition);
+}
+
+.dl-theme-card.active {
+  border-color: var(--dl-accent);
+  box-shadow: 0 0 20px var(--dl-accent-glow);
+}
+
+.dl-theme-preview {
+  height: 180px;
+  width: 100%;
+  object-fit: cover;
+  background: var(--dl-surface);
+}
+
+.dl-theme-body {
+  padding: 1.25rem;
+}
+
+.dl-theme-name {
+  font-family: var(--dl-font-heading);
+  font-size: 1.2rem;
+  margin-bottom: 0.4rem;
+}
+
+.dl-theme-desc {
+  font-size: 0.85rem;
+  color: var(--dl-text-muted);
+  margin-bottom: 1rem;
+}
+
+/* Addons / Plugins */
+.dl-addons-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--dl-obsidian);
+  border: 1px solid var(--dl-border);
+}
+
+.dl-addons-table th, .dl-addons-table td {
+  padding: 1rem 1.25rem;
+  text-align: left;
+  border-bottom: 1px solid var(--dl-border);
+}
+
+.dl-addons-table th {
+  font-family: var(--dl-font-mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  color: var(--dl-text-muted);
+  background: var(--dl-surface);
+}
+
+/* Switch Toggle Component */
+.dl-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+
+.dl-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.dl-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: var(--dl-surface-elevated);
+  border: 1px solid var(--dl-border-strong);
+  transition: .3s;
+}
+
+.dl-slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  bottom: 3px;
+  background-color: var(--dl-text-muted);
+  transition: .3s;
+}
+
+input:checked + .dl-slider {
+  background-color: rgba(214, 255, 0, 0.15);
+  border-color: var(--dl-accent);
+}
+
+input:checked + .dl-slider:before {
+  transform: translateX(20px);
+  background-color: var(--dl-accent);
+  box-shadow: 0 0 8px var(--dl-accent);
+}
+
+/* Installer Wizard */
+.dl-installer-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background: radial-gradient(circle at center, #141822 0%, #07080a 100%);
+}
+
+.dl-installer-card {
+  width: 100%;
+  max-width: 680px;
+  background: var(--dl-obsidian);
+  border: 1px solid var(--dl-border-strong);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.9), 0 0 30px rgba(214, 255, 0, 0.1);
+  padding: 2.5rem;
+  position: relative;
+}
+
+.dl-wizard-steps {
+  display: flex;
+  margin-bottom: 2rem;
+  border-bottom: 1px solid var(--dl-border);
+}
+
+.dl-step-indicator {
+  flex: 1;
+  text-align: center;
+  padding-bottom: 0.75rem;
+  font-family: var(--dl-font-mono);
+  font-size: 0.72rem;
+  color: var(--dl-text-faint);
+  border-bottom: 2px solid transparent;
+}
+
+.dl-step-indicator.active {
+  color: var(--dl-accent);
+  border-bottom-color: var(--dl-accent);
+  font-weight: 700;
+}
+
+.dl-step-indicator.completed {
+  color: var(--dl-text);
+  border-bottom-color: var(--dl-emerald);
+}
+
+@media (max-width: 900px) {
+  .dl-admin-layout { grid-template-columns: 1fr; }
+  .dl-admin-sidebar { position: static; height: auto; }
+  .dl-editor-studio { grid-template-columns: 1fr; }
+}

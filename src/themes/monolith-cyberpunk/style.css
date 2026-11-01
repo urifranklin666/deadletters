@@ -1,0 +1,31 @@
+/* Monolith Cyberpunk Theme */
+:root[data-theme="monolith-cyberpunk"] {
+  --dl-accent: #00F0FF;
+  --dl-accent-glow: rgba(0, 240, 255, 0.3);
+  --dl-bg: #050608;
+  --dl-bg-surface: #0D0F14;
+  --dl-bg-surface-elevated: #141820;
+  --dl-border: #1E2430;
+  --dl-border-strong: #2F394D;
+  --dl-text: #E5E9F0;
+  --dl-text-muted: #6E7787;
+  --dl-font-heading: 'Space Grotesk', sans-serif;
+  --dl-font-serif: 'Space Grotesk', sans-serif;
+  --dl-font-body: 'Inter', sans-serif;
+  --dl-font-mono: 'JetBrains Mono', monospace;
+  --dl-radius: 2px;
+}
+
+[data-theme="monolith-cyberpunk"] body {
+  background-image: radial-gradient(rgba(0, 240, 255, 0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+[data-theme="monolith-cyberpunk"] .dl-post-card {
+  border-left: 3px solid var(--dl-border);
+}
+
+[data-theme="monolith-cyberpunk"] .dl-post-card:hover {
+  border-left-color: var(--dl-accent);
+  box-shadow: 0 0 20px var(--dl-accent-glow);
+}

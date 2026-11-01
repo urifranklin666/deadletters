@@ -1,0 +1,13 @@
+{
+  "slug": "brutalist-markdown",
+  "name": "Brutalist Markdown & Dropcap Enhancer",
+  "version": "2.0.0",
+  "author": "deadplug.digital",
+  "description": "Extends standard markdown with oversized brutalist dropcaps, [drop:quote] custom cards, [audio] waveforms, and glitch text effects.",
+  "entry": "index.js",
+  "is_active": 1,
+  "settings": {
+    "auto_dropcaps": true,
+    "highlight_links": true
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "slug": "deadletter-mesh",
+  "name": "Deadletter P2P Mesh & Syndicator",
+  "version": "1.2.0",
+  "author": "deadplug.digital",
+  "description": "Federation protocol for Deadletters nodes. Synchronizes re-letters, signs cryptographic provenance envelopes, and pings subscribed nodes upon new drops.",
+  "entry": "index.js",
+  "is_active": 1,
+  "settings": {
+    "auto_ping_peers": true,
+    "require_signatures": true,
+    "peer_relays": ["https://mesh.deadplug.digital/relay", "https://tokyo.deadletters.network/relay"]
+  }
+}

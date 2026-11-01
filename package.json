@@ -1,0 +1,40 @@
+{
+  "name": "deadletters",
+  "version": "1.0.0",
+  "description": "High-fashion brutalist blogging and resharing engine by deadplug.digital",
+  "main": "src/server.js",
+  "bin": {
+    "deadletters": "./bin/deadletters.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js",
+    "install-wizard": "node bin/deadletters.js install",
+    "export-zip": "node bin/deadletters.js export-zip",
+    "snapshot-zip": "node bin/deadletters.js snapshot-zip"
+  },
+  "keywords": [
+    "cms",
+    "blogging",
+    "resharing",
+    "wordpress-alternative",
+    "editorial",
+    "deadplug",
+    "brutalist",
+    "mesh",
+    "sqlite"
+  ],
+  "author": "deadplug.digital",
+  "license": "Proprietary",
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^13.0.3",
+    "cors": "^2.8.5",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "marked": "^17.0.4",
+    "multer": "^2.1.1",
+    "sanitize-html": "^2.17.1"
+  }
+}

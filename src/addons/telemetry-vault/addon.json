@@ -1,0 +1,14 @@
+{
+  "slug": "telemetry-vault",
+  "name": "Deadplug Enterprise License Vault",
+  "version": "1.0.0",
+  "author": "deadplug.digital",
+  "description": "Enterprise licensing verification, commercial node telemetry, and white-label client deployment controls for Deadletters engine.",
+  "entry": "index.js",
+  "is_active": 1,
+  "settings": {
+    "license_tier": "Enterprise / Atelier Fleet",
+    "license_key": "DP-ENT-2026-X7710-UNLIMITED",
+    "heartbeat_interval_sec": 3600
+  }
+}

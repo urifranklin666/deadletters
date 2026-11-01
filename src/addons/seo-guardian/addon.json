@@ -1,0 +1,14 @@
+{
+  "slug": "seo-guardian",
+  "name": "Deadplug SEO Guardian & Schema Engine",
+  "version": "1.0.4",
+  "author": "deadplug.digital",
+  "description": "Automated OpenGraph metadata, JSON-LD Schema.org editorial structures, Twitter Card tags, and XML sitemaps.",
+  "entry": "index.js",
+  "is_active": 1,
+  "settings": {
+    "twitter_handle": "@deadplugdigital",
+    "enable_json_ld": true,
+    "enable_opengraph": true
+  }
+}

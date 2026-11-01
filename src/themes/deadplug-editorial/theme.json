@@ -1,0 +1,20 @@
+{
+  "slug": "deadplug-editorial",
+  "name": "Deadplug Signature Editorial",
+  "version": "1.0.0",
+  "author": "deadplug.digital",
+  "description": "The flagship deadletters theme. Avant-garde brutalist luxury editorial with oversized serif typography, obsidian backdrop, and electric acid accents.",
+  "preview_image": "/uploads/deadplug_editorial_cover.jpg",
+  "defaults": {
+    "accent_color": "#D6FF00",
+    "bg_color": "#08090B",
+    "card_bg": "#101216",
+    "text_color": "#F0F2F5",
+    "text_muted": "#8A909E",
+    "font_heading": "'Syne', 'Playfair Display', serif",
+    "font_body": "'Inter', -apple-system, sans-serif",
+    "font_mono": "'JetBrains Mono', monospace",
+    "border_radius": "0px",
+    "container_width": "1280px"
+  }
+}
