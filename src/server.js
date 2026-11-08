@@ -195,6 +195,7 @@ app.use('/api/v1/auth', require('./api/auth.routes'));
 app.use('/api/v1/posts', require('./api/posts.routes'));
 app.use('/api/v1/reshares', require('./api/reshares.routes'));
 app.use('/api/v1/federation', require('./api/federation.routes'));
+app.use('/api/v1/remote', require('./api/remote.routes'));
 app.use('/api/v1/media', require('./api/media.routes'));
 app.use('/api/v1/taxonomies', require('./api/taxonomies.routes'));
 app.use('/api/v1/comments', require('./api/comments.routes'));

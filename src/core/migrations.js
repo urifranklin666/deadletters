@@ -126,6 +126,31 @@ const migrations = [
           ON dl_node_key_history(retired_at);
       `);
     }
+  },
+  {
+    version: 5,
+    name: 'remote-exchange-promotion',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS dl_federation_remote_posts (
+          remote_post_id TEXT PRIMARY KEY,
+          inbox_id INTEGER NOT NULL UNIQUE,
+          envelope_hash TEXT NOT NULL UNIQUE,
+          status TEXT NOT NULL DEFAULT 'promoted'
+            CHECK (status IN ('promoted', 'hidden', 'removed')),
+          promoted_by INTEGER,
+          promoted_at TEXT,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (inbox_id) REFERENCES dl_federation_inbox(inbox_id) ON DELETE CASCADE,
+          FOREIGN KEY (promoted_by) REFERENCES dl_users(ID) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_federation_remote_status_promoted
+          ON dl_federation_remote_posts(status, promoted_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_federation_remote_promoted_by
+          ON dl_federation_remote_posts(promoted_by);
+      `);
+    }
   }
 ];
 

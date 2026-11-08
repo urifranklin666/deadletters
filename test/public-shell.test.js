@@ -16,6 +16,7 @@ test('canonical paths produce safe initial SPA routes', () => {
   assert.equal(initialRouteFromPathname('/page/about/').hash, '#/page/about');
   assert.equal(initialRouteFromPathname('/admin').hash, '#/admin');
   assert.equal(initialRouteFromPathname('/reshares').hash, '#/reshares');
+  assert.equal(initialRouteFromPathname('/remote').hash, '#/remote');
   assert.equal(initialRouteFromPathname('/letter/bad%2Fslash'), null);
   assert.equal(initialRouteFromPathname('/unrelated'), null);
 });
@@ -66,6 +67,18 @@ test('SEO filters run but malformed replacements retain required metadata', () =
   assert.equal(called, true);
   assert.match(metadata, /property="og:title" content="Node"/);
   assert.match(metadata, /name="description" content="Letters"/);
+});
+
+test('remote exchange canonical metadata points at the public remote path', () => {
+  const metadata = renderMetadata({
+    post: null,
+    route: initialRouteFromPathname('/remote'),
+    site: { title: 'Node', tagline: 'Letters', url: 'https://node.example' },
+    requestOrigin: 'https://request.example',
+    hookEngine: { applyFilters: (_name, tags) => tags }
+  });
+  assert.match(metadata, /rel="canonical" href="https:\/\/node.example\/remote"/);
+  assert.match(metadata, /<title>Node<\/title>/);
 });
 
 test('shell injection preserves markers for later renders and serializes the route', () => {

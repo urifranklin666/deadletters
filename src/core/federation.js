@@ -32,6 +32,15 @@ const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const DELIVERY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,200}$/;
 const KEY_ID_PATTERN = /^ed25519-[a-f0-9]{16}$/i;
 
+const REMOTE_STATUSES = Object.freeze(['promoted', 'hidden', 'removed']);
+const REMOTE_STATUS_SET = new Set(REMOTE_STATUSES);
+const DEFAULT_REMOTE_LIMIT = 20;
+const MAX_REMOTE_LIMIT = 100;
+const MAX_REMOTE_OFFSET = 100000;
+const MAX_REMOTE_COMMENTARY = 10000;
+const MAX_REMOTE_CHAIN_COMMENTARY = 1000;
+const REMOTE_VERIFICATION_SCOPE = 'peer-ed25519-at-receipt';
+
 let postResharedHandler = null;
 let activeProcessing = null;
 let workerTimer = null;
@@ -1049,10 +1058,296 @@ function getInboxStatus() {
   };
 }
 
+function remotePostIdFor(envelopeHash) {
+  const digest = crypto.createHash('sha256')
+    .update(`deadletters-remote-exchange-v1:${envelopeHash}`, 'utf8')
+    .digest('hex');
+  return `rpost_${digest.slice(0, 32)}`;
+}
+
+function sanitizeRemoteChain(chain) {
+  if (!Array.isArray(chain)) return [];
+  return chain.slice(0, MAX_CHAIN_ENTRIES).map(entry => {
+    if (!isPlainObject(entry)) return { action: 'unknown' };
+    const safe = {};
+    const textFields = [
+      ['action', 100],
+      ['author', 300],
+      ['node', 500],
+      ['timestamp', 100],
+      ['commentary', MAX_REMOTE_CHAIN_COMMENTARY]
+    ];
+    for (const [name, maximum] of textFields) {
+      if (typeof entry[name] === 'string') safe[name] = truncate(entry[name], maximum);
+    }
+    if (typeof entry.curator_id === 'number' && Number.isSafeInteger(entry.curator_id)) {
+      safe.curator_id = entry.curator_id;
+    } else if (typeof entry.curator_id === 'string') {
+      safe.curator_id = truncate(entry.curator_id, 100);
+    }
+    return safe;
+  });
+}
+
+function buildRemoteProjection(remoteRow, inboxRow, { includeStatus = false } = {}) {
+  if (!remoteRow || !inboxRow) return null;
+  const payload = safePayloadObject(inboxRow.payload_json);
+  const envelope = payload && isPlainObject(payload.envelope) ? payload.envelope : null;
+  if (!envelope) return null;
+
+  const source = isPlainObject(envelope.source) ? envelope.source : {};
+  const curator = isPlainObject(envelope.curator) ? envelope.curator : {};
+  const signingNode = isPlainObject(envelope.signing_node) ? envelope.signing_node : {};
+  const chain = Array.isArray(envelope.provenance_chain) ? envelope.provenance_chain : [];
+  const keyId = truncate(signingNode.key_id || inboxRow.key_id || '', 100);
+  const signingNodeHandle = truncate(signingNode.handle || inboxRow.source_node || '', 100);
+  const sourceNode = truncate(source.node || inboxRow.source_node || '', 500);
+  const peer = getDb().prepare(
+    'SELECT enabled FROM dl_federation_peers WHERE key_id = ? AND node_handle = ?'
+  ).get(keyId, signingNodeHandle) || null;
+
+  const item = {
+    remote_post_id: remoteRow.remote_post_id,
+    inbox_id: remoteRow.inbox_id,
+    envelope_hash: remoteRow.envelope_hash,
+    source_node: sourceNode,
+    source_url: source.url === null || source.url === undefined ? null : truncate(source.url, 2048),
+    source_author: truncate(source.author || '', 300),
+    source_title: truncate(source.title || '', 500),
+    source_excerpt: truncate(source.excerpt || '', 2000),
+    source: {
+      node: sourceNode,
+      url: source.url === null || source.url === undefined ? null : truncate(source.url, 2048),
+      author: truncate(source.author || '', 300),
+      title: truncate(source.title || '', 500),
+      excerpt: truncate(source.excerpt || '', 2000)
+    },
+    curator_commentary: truncate(curator.commentary || '', MAX_REMOTE_COMMENTARY),
+    created_at: truncate(envelope.created_at || '', 100),
+    signed_at: truncate(envelope.created_at || '', 100),
+    promoted_at: remoteRow.promoted_at || null,
+    signing_node_handle: signingNodeHandle,
+    signing_node: {
+      handle: signingNodeHandle,
+      key_id: keyId
+    },
+    provenance_chain: sanitizeRemoteChain(chain),
+    key_id: keyId,
+    chain_length: chain.length,
+    parent_envelope_hash: envelope.parent_envelope_hash === null || envelope.parent_envelope_hash === undefined
+      ? null
+      : truncate(envelope.parent_envelope_hash, 200),
+    verification: {
+      scope: REMOTE_VERIFICATION_SCOPE,
+      peer_registered: Boolean(peer),
+      peer_enabled: Boolean(peer && peer.enabled),
+      key_id: keyId,
+      note: 'Ed25519 signature and canonical hash were verified against an enabled registered peer key when this item was promoted. Peer registry state shown is current.'
+    }
+  };
+  if (includeStatus) item.status = remoteRow.status;
+  return item;
+}
+
+/**
+ * Explicitly promote or moderate one accepted inbox envelope. Promotion always
+ * re-verifies the stored payload against the current enabled peer registry;
+ * hiding/removing never rewrites the audit row. No local post is ever created.
+ */
+function setInboxRemoteStatus({ inboxId, status, actorUserId } = {}) {
+  if (!Number.isSafeInteger(inboxId) || inboxId <= 0) {
+    throw httpError(400, 'A positive federation inbox id is required.');
+  }
+  if (!REMOTE_STATUS_SET.has(status)) {
+    throw httpError(400, 'Remote exchange status must be promoted, hidden, or removed.');
+  }
+  if (!Number.isSafeInteger(actorUserId) || actorUserId <= 0) {
+    throw httpError(400, 'An authenticated actor id is required.');
+  }
+
+  const db = getDb();
+  const apply = db.transaction(() => {
+    const inbox = db.prepare('SELECT * FROM dl_federation_inbox WHERE inbox_id = ?').get(inboxId);
+    if (!inbox) throw httpError(404, 'Federation inbox record not found.');
+    if (inbox.status !== 'accepted' || !inbox.envelope_hash) {
+      throw httpError(409, 'Only accepted federation inbox records can be promoted or moderated.');
+    }
+
+    const existing = db.prepare(`
+      SELECT * FROM dl_federation_remote_posts
+      WHERE inbox_id = ? OR envelope_hash = ?
+      LIMIT 1
+    `).get(inboxId, inbox.envelope_hash);
+    if (existing && existing.inbox_id !== inboxId) {
+      throw httpError(409, 'This envelope is already linked to a different inbox record.');
+    }
+
+    if (status === 'promoted') {
+      // Re-verify the retained delivery, not the promotion request, so a peer
+      // that was disabled, deleted, rotated, or a payload that was tampered
+      // with in storage cannot become public.
+      verifyInboxPromotion(inbox);
+      const now = new Date().toISOString();
+
+      if (!existing) {
+        db.prepare(`
+          INSERT INTO dl_federation_remote_posts (
+            remote_post_id, inbox_id, envelope_hash, status,
+            promoted_by, promoted_at, updated_at
+          ) VALUES (?, ?, ?, 'promoted', ?, ?, ?)
+        `).run(
+          remotePostIdFor(inbox.envelope_hash),
+          inbox.inbox_id,
+          inbox.envelope_hash,
+          actorUserId,
+          now,
+          now
+        );
+      } else if (existing.status !== 'promoted') {
+        db.prepare(`
+          UPDATE dl_federation_remote_posts
+          SET status = 'promoted', promoted_by = ?, promoted_at = ?, updated_at = ?
+          WHERE remote_post_id = ?
+        `).run(actorUserId, now, now, existing.remote_post_id);
+      }
+      // A duplicate promotion is idempotent: the original audit timestamps are
+      // preserved after successful re-verification.
+    } else {
+      if (!existing) {
+        throw httpError(409, 'A remote exchange item must be promoted before it can be hidden or removed.');
+      }
+      db.prepare(`
+        UPDATE dl_federation_remote_posts
+        SET status = ?, updated_at = ?
+        WHERE remote_post_id = ?
+      `).run(status, new Date().toISOString(), existing.remote_post_id);
+    }
+
+    const updated = db.prepare(
+      'SELECT * FROM dl_federation_remote_posts WHERE inbox_id = ?'
+    ).get(inbox.inbox_id);
+    const projection = buildRemoteProjection(updated, inbox, { includeStatus: true });
+    if (projection) return projection;
+
+    // Hiding/removing must still be possible even if the retained payload was
+    // damaged after promotion: visibility is independent of projection detail.
+    if (status !== 'promoted') {
+      return {
+        remote_post_id: updated.remote_post_id,
+        inbox_id: updated.inbox_id,
+        envelope_hash: updated.envelope_hash,
+        status: updated.status,
+        promoted_at: updated.promoted_at || null,
+        updated_at: updated.updated_at
+      };
+    }
+    throw httpError(500, 'Remote exchange projection failed.');
+  });
+
+  return apply();
+}
+
+function verifyInboxPromotion(inbox) {
+  const stored = safePayloadObject(inbox.payload_json);
+  if (!stored) throw httpError(422, 'Stored federation payload is not valid JSON.');
+
+  const shape = validateDeliveryShape(stored);
+  if (shape.error) {
+    throw httpError(422, `Stored federation payload is no longer valid: ${shape.error}`);
+  }
+  const delivery = shape.value;
+
+  if (!inbox.envelope_hash || inbox.envelope_hash !== delivery.envelopeHash) {
+    throw httpError(422, 'Stored federation payload no longer matches the inbox envelope hash.');
+  }
+  if (!inbox.key_id || inbox.key_id !== delivery.keyId) {
+    throw httpError(422, 'Stored federation payload no longer matches the inbox signing key id.');
+  }
+  if (!inbox.source_node || inbox.source_node !== delivery.sourceNode) {
+    throw httpError(422, 'Stored federation payload no longer matches the inbox node handle.');
+  }
+
+  const peer = getDb().prepare(
+    'SELECT * FROM dl_federation_peers WHERE key_id = ? AND node_handle = ?'
+  ).get(delivery.keyId, delivery.sourceNode);
+  if (!peer) {
+    throw httpError(422, 'The stored envelope no longer matches a registered federation peer (the peer may be disabled, deleted, or rotated).');
+  }
+  if (!peer.enabled) {
+    throw httpError(422, 'The stored envelope peer is not enabled for federation.');
+  }
+  if (inbox.source_peer_id !== null && inbox.source_peer_id !== undefined &&
+    Number(inbox.source_peer_id) !== Number(peer.peer_id)) {
+    throw httpError(422, 'The stored envelope peer identity no longer matches the inbox trust anchor.');
+  }
+  if (!provenance.verifyEnvelopeSignature(delivery.envelope, delivery.signature, peer.public_key_der)) {
+    throw httpError(422, 'The stored envelope Ed25519 signature is invalid for the registered peer key.');
+  }
+
+  return { delivery, peer };
+}
+
+function countPromotedRemote() {
+  return getDb().prepare(`
+    SELECT COUNT(*) AS count
+    FROM dl_federation_remote_posts r
+    JOIN dl_federation_inbox i ON i.inbox_id = r.inbox_id
+    WHERE r.status = 'promoted' AND i.status = 'accepted'
+  `).get().count;
+}
+
+function listPromotedRemote({ limit = DEFAULT_REMOTE_LIMIT, offset = 0 } = {}) {
+  const parsedLimit = Number.parseInt(limit, 10);
+  const parsedOffset = Number.parseInt(offset, 10);
+  const boundedLimit = Math.min(
+    Math.max(Number.isFinite(parsedLimit) ? parsedLimit : DEFAULT_REMOTE_LIMIT, 1),
+    MAX_REMOTE_LIMIT
+  );
+  const boundedOffset = Math.min(
+    Math.max(Number.isFinite(parsedOffset) ? parsedOffset : 0, 0),
+    MAX_REMOTE_OFFSET
+  );
+
+  const rows = getDb().prepare(`
+    SELECT
+      r.remote_post_id, r.inbox_id, r.envelope_hash, r.status AS remote_status,
+      r.promoted_by, r.promoted_at, r.updated_at AS remote_updated_at,
+      i.payload_json, i.source_node, i.key_id, i.received_at
+    FROM dl_federation_remote_posts r
+    JOIN dl_federation_inbox i ON i.inbox_id = r.inbox_id
+    WHERE r.status = 'promoted' AND i.status = 'accepted'
+    ORDER BY r.promoted_at DESC, r.remote_post_id DESC
+    LIMIT ? OFFSET ?
+  `).all(boundedLimit, boundedOffset);
+
+  const items = [];
+  for (const row of rows) {
+    const item = buildRemoteProjection(row, row);
+    if (item) items.push(item);
+  }
+
+  return {
+    items,
+    total: countPromotedRemote(),
+    limit: boundedLimit,
+    offset: boundedOffset
+  };
+}
+
 function listInbox({ limit = 50, includePayload = false } = {}) {
   const boundedLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
   const rows = getDb().prepare(`
-    SELECT * FROM dl_federation_inbox ORDER BY inbox_id DESC LIMIT ?
+    SELECT
+      i.*,
+      r.remote_post_id,
+      r.status AS remote_status,
+      r.promoted_by,
+      r.promoted_at,
+      r.updated_at AS remote_updated_at
+    FROM dl_federation_inbox i
+    LEFT JOIN dl_federation_remote_posts r ON r.inbox_id = i.inbox_id
+    ORDER BY i.inbox_id DESC
+    LIMIT ?
   `).all(boundedLimit);
 
   return rows.map(row => {
@@ -1065,10 +1360,18 @@ function listInbox({ limit = 50, includePayload = false } = {}) {
       source_node: row.source_node,
       key_id: row.key_id,
       envelope_hash: row.envelope_hash,
+      source_title: envelope && isPlainObject(envelope.source)
+        ? truncate(envelope.source.title || '', 500)
+        : null,
       parent_envelope_hash: envelope ? (envelope.parent_envelope_hash ?? null) : null,
       status: row.status,
       reason: row.reason,
       received_at: row.received_at,
+      remote_post_id: row.remote_post_id || null,
+      remote_status: row.remote_status || null,
+      promoted_by: row.promoted_by ?? null,
+      promoted_at: row.promoted_at || null,
+      remote_updated_at: row.remote_updated_at || null,
       local_post_created: false,
       storage: 'federation-inbox-audit'
     };
@@ -1082,6 +1385,7 @@ function getFederationStatus() {
     SELECT COUNT(*) AS total, SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END) AS enabled
     FROM dl_federation_peers
   `).get();
+  const remoteCounts = countByStatus('dl_federation_remote_posts');
 
   return {
     peers: {
@@ -1090,6 +1394,13 @@ function getFederationStatus() {
     },
     outbox: getOutboxStatus(),
     inbox: getInboxStatus(),
+    remote_exchange: {
+      promoted: remoteCounts.promoted || 0,
+      hidden: remoteCounts.hidden || 0,
+      removed: remoteCounts.removed || 0,
+      total: Object.values(remoteCounts).reduce((sum, value) => sum + value, 0),
+      public_count: countPromotedRemote()
+    },
     worker: {
       running: workerTimer !== null,
       interval_ms: WORKER_INTERVAL_MS
@@ -1103,6 +1414,8 @@ function getFederationStatus() {
     limitations: {
       remote_key_discovery: false,
       remote_post_creation: false,
+      automatic_remote_promotion: false,
+      cross_node_parent_proof: false,
       confidentiality: 'HTTPS only; no application-layer encryption'
     }
   };
@@ -1143,6 +1456,11 @@ module.exports = {
   MAX_ATTEMPTS,
   WORKER_INTERVAL_MS,
   BACKOFF_SCHEDULE_MS,
+  REMOTE_STATUSES,
+  DEFAULT_REMOTE_LIMIT,
+  MAX_REMOTE_LIMIT,
+  MAX_REMOTE_OFFSET,
+  REMOTE_VERIFICATION_SCOPE,
   createKeyId,
   normalizeEndpointUrl,
   validatePeerInput,
@@ -1159,6 +1477,9 @@ module.exports = {
   receiveDelivery,
   getInboxStatus,
   listInbox,
+  setInboxRemoteStatus,
+  countPromotedRemote,
+  listPromotedRemote,
   getFederationStatus,
   startFederationWorker,
   stopFederationWorker,

@@ -1,7 +1,9 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const { test, expect } = require('@playwright/test');
 const { AxeBuilder } = require('@axe-core/playwright');
+const { canonicalJson } = require('../src/core/provenance');
 
 async function expectNoSeriousAccessibilityViolations(page, label) {
   const results = await new AxeBuilder({ page })
@@ -15,7 +17,7 @@ async function expectNoSeriousAccessibilityViolations(page, label) {
 
 test.describe.configure({ mode: 'serial' });
 
-test('fresh install through publishing, moderation, federation, and authenticated export', async ({ page }) => {
+test('fresh install through publishing, moderation, federation, and authenticated export', async ({ page, request }) => {
   const pageErrors = [];
   const cspViolations = [];
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -134,6 +136,87 @@ test('fresh install through publishing, moderation, federation, and authenticate
     await expect(page.locator('#federation-peer-form')).toBeVisible();
     await expect(page.getByText(/out-of-band/i).first()).toBeVisible();
     await expect(page.locator('#btn-register-peer')).toBeVisible();
+  });
+
+  await test.step('deliver, promote, display, and hide a signed remote envelope', async () => {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+    const publicKeyDer = publicKey.export({ type: 'spki', format: 'der' }).toString('base64url');
+    const keyId = `ed25519-${crypto.createHash('sha256').update(Buffer.from(publicKeyDer, 'base64url')).digest('hex').slice(0, 16)}`;
+    const createdAt = new Date().toISOString();
+    const sourceTitle = 'Remote Transmission from E2E';
+    const curatorCommentary = 'A remote curator note delivered through the signed exchange test.';
+    const envelope = {
+      type: 'deadletters-reletter',
+      spec: 'deadletters-reletter-v1',
+      source: {
+        url: 'https://remote.example/letters/e2e-remote',
+        node: '@remote/e2e',
+        author: 'Remote E2E Author',
+        title: sourceTitle,
+        excerpt: 'A signed remote excerpt that should never become a local post.'
+      },
+      curator: { id: 7001, commentary: curatorCommentary },
+      created_at: createdAt,
+      signing_node: { handle: '@remote/e2e', key_id: keyId },
+      parent_envelope_hash: null,
+      provenance_chain: [
+        { action: 'original_drop', author: 'Remote E2E Author', node: '@remote/e2e', timestamp: createdAt },
+        { action: 're_lettered', curator_id: 7001, node: '@remote/e2e', commentary: curatorCommentary, timestamp: createdAt }
+      ]
+    };
+    const canonicalBytes = canonicalJson(envelope);
+    const envelopeHash = crypto.createHash('sha256').update(canonicalBytes, 'utf8').digest('base64url');
+    const signature = crypto.sign(null, Buffer.from(canonicalBytes, 'utf8'), privateKey).toString('base64url');
+
+    await page.evaluate(async ({ publicKeyDer, keyId }) => API.post('/api/v1/federation/peers', {
+      endpoint_url: 'https://remote.example',
+      node_handle: '@remote/e2e',
+      public_key: publicKeyDer,
+      key_id: keyId,
+      enabled: true
+    }), { publicKeyDer, keyId });
+
+    const delivery = await request.post('/api/v1/federation/inbox', {
+      data: {
+        spec: 'deadletters-federation-delivery-v1',
+        delivery_id: 'dlv_e2e_remote_exchange_1',
+        sent_at: createdAt,
+        envelope,
+        envelope_hash: envelopeHash,
+        signature,
+        signature_algorithm: 'Ed25519',
+        key_id: keyId
+      }
+    });
+    expect(delivery.status()).toBe(202);
+
+    await page.goto('/#/admin/federation');
+    const inboxRow = page.locator('tr', { hasText: sourceTitle });
+    await expect(inboxRow).toContainText('ACCEPTED');
+    await inboxRow.getByRole('button', { name: 'PUBLISH REMOTE' }).click();
+    await expect(page.locator('#dl-confirm-ok')).toBeVisible();
+    await page.locator('#dl-confirm-ok').click();
+    await expect(page.getByText('Remote envelope published to the labeled exchange.')).toBeVisible();
+
+    await page.goto('/');
+    await expect(page.getByRole('link', { name: 'REMOTE EXCHANGE' }).first()).toBeVisible();
+    await page.goto('/remote');
+    await expect(page.getByRole('heading', { name: 'REMOTE EXCHANGE' })).toBeVisible();
+    await expect(page.getByText(sourceTitle).first()).toBeVisible();
+    await expect(page.getByText('Remote E2E Author').first()).toBeVisible();
+    await expect(page.getByText(curatorCommentary).first()).toBeVisible();
+    await expect(page.getByText('NOT A LOCAL POST')).toBeVisible();
+    await expect(page.getByText(/SIGNED PEER \/\/ CURRENTLY TRUSTED/)).toBeVisible();
+    await expect(page).toHaveTitle(/Deadletters/i);
+    await expectNoSeriousAccessibilityViolations(page, 'remote exchange');
+
+    await page.goto('/#/admin/federation');
+    const promotedRow = page.locator('tr', { hasText: sourceTitle });
+    await promotedRow.getByRole('button', { name: 'HIDE FROM PUBLIC' }).click();
+    await page.locator('#dl-confirm-ok').click();
+    await expect(page.getByText(/audit retained/)).toBeVisible();
+    await page.goto('/remote');
+    await expect(page.getByText(sourceTitle)).toHaveCount(0);
   });
 
   await test.step('download a protected engine export with bearer authentication', async () => {

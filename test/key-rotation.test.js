@@ -96,7 +96,7 @@ test('migration 4 creates a public-only retired-key history and rejects a missin
 
   assert.deepEqual(
     db.prepare('SELECT version FROM dl_schema_migrations ORDER BY version').all().map(row => row.version),
-    [1, 2, 3, 4]
+    [1, 2, 3, 4, 5]
   );
 
   assert.equal(getPublicNodeIdentity({ create: false }), null);

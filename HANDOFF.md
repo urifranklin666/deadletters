@@ -7,8 +7,8 @@ Date: 2026-11-08
 - Project root: `/run/media/deadplug/CODE/deadletters`
 - Public remote: `https://github.com/urifranklin666/deadletters.git`
 - Branch: `main`, tracking `origin/main`.
-- Base milestone commits pushed to `origin/main`: `b7b06b6` (hardening/federation) and `0d9e974` (key rotation/browser E2E).
-- The latest deployment/backup, accessibility, and expanded browser-test changes are **uncommitted and unpushed**.
+- Base milestone commits pushed to `origin/main`: `b7b06b6` (hardening/federation), `0d9e974` (key rotation/browser E2E), and `5fa4ad9` (deployment/backups/accessibility).
+- The latest Federation v1 remote-exchange backend/UI, public `/remote` feed, and expanded signed-remote browser test are **uncommitted and unpushed**.
 - The working tree contains additional intentional changes. **Do not run `git reset`, `git clean`, or discard changes.**
 - Runtime config was removed from Git tracking in the milestone commit; the local runtime file remains on disk and is ignored.
 - Local runtime secrets were rotated during this work. The local config and SQLite database are mode `0600`. The original public-repository JWT secret must still be treated as compromised because it remains in Git history.
@@ -21,9 +21,9 @@ Date: 2026-11-08
 Current verified state:
 
 ```text
-npm test                 -> 174 passed, 1 skipped (optional age case), 0 failed
-npm run check:syntax     -> 75 JavaScript files passed
-npm run test:e2e         -> 1 Chromium lifecycle passed with axe/mobile/role checks
+npm test                 -> 179 passed, 1 skipped (optional age case), 0 failed
+npm run check:syntax     -> 77 JavaScript files passed
+npm run test:e2e         -> 1 Chromium lifecycle passed (including signed remote promotion)
 git diff --check         -> clean
 ```
 
@@ -153,7 +153,7 @@ npm start
 - CLI: `node bin/deadletters.js rotate-node-key --reason "..."`. It warns that node identity changes, peers must re-register the new key, old envelopes are not auto-delivered under the new identity, pre-rotation snapshots remain sensitive, and no private key is printed. The command closes the database before exit.
 - Federation core is deliberately unchanged: old envelopes are not silently sent under the new trust identity, and peers must re-register the new public key out-of-band.
 
-#### Delivery-only federation
+#### Federation: signed delivery and explicit remote exchange
 
 - Superadmin explicitly registers peers with endpoint, node handle, and out-of-band Ed25519 public key.
 - No automatic remote key discovery/fetching in this MVP.
@@ -164,7 +164,13 @@ npm start
 - Five-attempt exponential backoff and dead-letter state.
 - Optional unref’d 60-second worker started only by `startServer`; graceful shutdown stops it.
 - Superadmin federation UI for peers, outbox/inbox status, delivery processing, and enqueue.
-- Two-node integration test proves real HTTP exchange, tamper rejection, idempotency, retry, and dead-letter behavior.
+- Migration 5 adds `dl_federation_remote_posts`: a separate projection over accepted inbox rows with unique `inbox_id`/`envelope_hash`, constrained `promoted`/`hidden`/`removed` status, `promoted_by` user FK, promotion/update timestamps, inbox cascade FK, and status/promoter indexes.
+- `POST /api/v1/federation/inbox/:id/status` (`promoted|hidden|removed`) is superadmin-only. Promotion re-reads the stored delivery and re-verifies canonical hash plus Ed25519 signature against an **enabled** registered peer matching key id and node handle. Disabled/deleted/rotated peers, key mismatches, and tampered stored payloads are rejected with safe `400/404/409/422` responses. Hidden/removed transitions never delete audit and never create `dl_posts`.
+- Promotion is idempotent/upsert per inbox/envelope. Hide removes public visibility; re-promotion restores it; removal keeps both the inbox and remote audit rows. Deleting the inbox row cascades the remote projection.
+- `GET /api/v1/remote?limit=&offset=` is public, rate-limited, bounded to 1–100 with a bounded offset, and `Cache-Control: no-store` so hide/promote changes are immediate. It exposes only promoted rows through a whitelisted projection with bounded strings and verification metadata (`scope: "peer-ed25519-at-receipt"`, current peer flags, key id, note). Delivery ids, payloads, errors, e-mail, local paths, and promoter ids are excluded.
+- Superadmin federation UI exposes promotion state and explicit PUBLISH REMOTE / HIDE actions with confirmation. The public `/remote` route renders promoted envelopes with a clear REMOTE ENVELOPE / NOT A LOCAL POST treatment, source node, signing key, curator commentary, verification state, and expandable provenance. A home-page REMOTE EXCHANGE link appears when promoted items exist.
+- Old inbox envelopes cannot be promoted after a peer is re-registered under a new key; the envelope must be delivered again under the current key.
+- Two-node integration test proves real HTTP exchange, promotion/hide/re-promote/removal, safe public projection, no local post creation, tamper rejection, idempotency, retry, and dead-letter behavior. Chromium E2E signs and delivers a remote envelope from a separate generated Ed25519 identity, promotes it through the superadmin UI, verifies the public feed, and hides it again.
 
 ### Phase 4 — operations and product polish
 
@@ -175,7 +181,7 @@ npm start
 - Role-aware admin landing/navigation and hidden unauthorized controls.
 - Accessible confirmation/modal patterns, focus trapping/Escape, responsive moderation/federation tables.
 - Honest addon metadata: compatibility markers and local license status only; no fake enterprise verification or peer relay claims.
-- Playwright Chromium lifecycle covers fresh install, canonical direct pages, signed public re-letter verification, anonymous comment and moderation, editor preview/publish sanitization, federation UI, authenticated ZIP download, operator landing/denied-route behavior, mobile overflow, serious/critical axe WCAG A/AA scans across public and all admin surfaces, and CSP/runtime-error assertions.
+- Playwright Chromium lifecycle covers fresh install, canonical direct pages, signed public re-letter verification, anonymous comment and moderation, editor preview/publish sanitization, federation UI, signed remote delivery + superadmin promotion + public `/remote` display + hiding, authenticated ZIP download, operator landing/denied-route behavior, mobile overflow, serious/critical axe WCAG A/AA scans across public and all admin surfaces, and CSP/runtime-error assertions.
 - Separate Browser E2E GitHub Actions workflow installs Chromium and retains traces/screenshots/reports on failure.
 - Accessibility pass fixed missing labels, image alternatives, focusable form names, and low-contrast faint text; responsive public header no longer overflows at 390px.
 - Node-key rotation archives retired public keys, keeps historical envelopes locally verifiable, exposes only the current key in discovery, and provides `rotate-node-key --reason`.
@@ -186,9 +192,9 @@ npm start
 
 These are deliberate next steps, not defects hidden by the test suite.
 
-1. **Functional Chromium E2E, mobile overflow, and serious/critical axe checks now exist.** Still missing: screenshot/visual regression baselines, complete axe coverage of every transient modal/state, two-node federation through the UI, snapshot restore through the browser, and broader role-specific workflows.
+1. **Functional Chromium E2E, signed remote promotion, mobile overflow, and serious/critical axe checks now exist.** Still missing: actual two-server federation through browser controls (the browser test uses a separately generated remote signer and real inbox delivery; the backend test uses two servers), screenshot/visual regression baselines, complete axe coverage of every transient modal/state, snapshot restore through the browser, and broader role-specific workflows.
 2. **Node-key rotation is local-only, not revocation.** Rotation retains retired public keys for local historical verification and changes the current signing identity, but it cannot revoke copies of old private keys, notify peers automatically, re-sign or re-deliver old envelopes under the new identity, or make disclosed snapshots/backups safe. Peers must re-register the new public key out-of-band, and a compromised key remains compromised.
-3. **Federation remains delivery-only.** It does not auto-discover/fetch keys, ingest remote envelopes into the public blog, verify parents across nodes, retract content, or implement ActivityPub/general sync. Inbox is audit-only.
+3. **Federation v1 remote exchange is implemented with explicit trust and promotion.** Promoted envelopes appear only in the separate read-only `/remote` exchange; they are never inserted into `dl_posts` or treated as local authorship. There is still no automatic promotion, automatic peer/key discovery, key fetching, cross-node parent proof, retraction propagation, or ActivityPub/general sync. After peer key rotation, older inbox envelopes cannot be promoted under the new key and must be re-delivered. Inbox and remote rows remain audit records; hide/remove does not delete them.
 4. **Snapshots contain private keys and config secrets and are unencrypted unless wrapped with age.** They are mode 0600 but must be protected like credential backups; the backup script adds optional age encryption and retention but not off-site replication.
 5. **Deployment and backup automation is example-based, not a managed layer.** Hardened systemd app/backup units, a daily timer, Caddy/nginx TLS reverse-proxy examples, an env template, deployment/backup docs, and an age-capable backup script now exist. Still missing: OS package/release automation, automatic off-site replication, monitoring integration, automated restore drills, and a tested HA/multi-writer design. Off-site copies, alerting, and recovery objectives remain operator responsibilities.
 6. **No performance/load benchmarks.** Avoid restoring cold-boot/high-traffic claims without measurements.
@@ -206,9 +212,9 @@ These are deliberate next steps, not defects hidden by the test suite.
 
 ### 1. Expand browser and accessibility coverage
 
-The baseline Playwright path now covers fresh install, seeded/canonical pages, public re-letter verification, anonymous comment/moderation, editor preview/publish sanitization, federation UI, authenticated ZIP download, operator landing/denied routes, 390px overflow, and serious/critical axe scans across public and administrative surfaces. Extend it with:
+The baseline Playwright path now covers fresh install, seeded/canonical pages, public re-letter verification, anonymous comment/moderation, editor preview/publish sanitization, federation UI, signed remote delivery/promotion/public display/hiding, authenticated ZIP download, operator landing/denied routes, 390px overflow, and serious/critical axe scans across public and administrative surfaces. Extend it with:
 
-- Two-node peer registration and outbox processing through browser controls.
+- Actual two-server peer registration and outbox processing through browser controls.
 - Author/art-director role-specific workflows beyond the operator check.
 - Snapshot export plus restore smoke in the browser.
 - Keyboard/focus trapping checks for every modal and all transient states.
@@ -222,9 +228,9 @@ The baseline Playwright path now covers fresh install, seeded/canonical pages, p
 - Pre-rotation snapshots and database copies still contain old private keys. Rotation cannot make a disclosed key safe.
 - Do not add private key material to history, CLI output, logs, or exports.
 
-### 3. Decide federation product boundary
+### 3. Federation follow-ups
 
-Either keep inbox as audit-only or design safe remote-content import/display with clear provenance labels, moderation, source trust, deletion/retraction, and parent-key handling. Do not silently turn signed remote payloads into normal local posts.
+The remote-exchange boundary is now explicit: accepted envelopes remain audit records until a superadmin promotes them into the separate read-only `/remote` exchange; they never become local posts. Next additions should cover trusted peer key transition/revocation and optional retractions, remote-parent retrieval/proof if desired, and a true two-server browser test. Do not add automatic promotion or silent import into `dl_posts` without a new trust design and moderation controls.
 
 ### 4. Deployment, backup, and monitoring follow-ups
 
@@ -247,7 +253,7 @@ Benchmark cold boot, publication reads, feed generation, export/restore, and fed
 - Auth/capabilities: `src/core/auth.js`, `src/core/capabilities.js`
 - Rendering/XSS: `src/core/content-renderer.js`, frontend `public/app/js/api.js`
 - Provenance: `src/core/provenance.js`, `test/provenance.test.js`, `test/key-rotation.test.js`
-- Federation: `src/core/federation.js`, `src/api/federation.routes.js`, `test/federation.test.js`
+- Federation: `src/core/federation.js`, `src/api/federation.routes.js`, `src/api/remote.routes.js`, `test/federation.test.js`
 - Public shell/SEO: `src/core/public-shell.js`, `test/public-shell.test.js`
 - Database/migrations: `src/core/db.js`, `src/core/schema.js`, `src/core/migrations.js`
 - Export/restore: `src/core/exporter.js`, `test/exporter.test.js`

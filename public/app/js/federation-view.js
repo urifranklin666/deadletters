@@ -472,9 +472,15 @@ const FederationView = {
                 <div class="dl-federation-mono" style="margin-top: 0.35rem;">
                   ${this.count(inboxStatus.accepted)} ACCEPTED · ${this.count(inboxStatus.rejected)} REJECTED · ${this.count(inboxStatus.total)} TOTAL
                 </div>
+                <div class="dl-federation-mono" style="margin-top: 0.35rem; color: var(--dl-cyan);">
+                  REMOTE EXCHANGE: ${this.count(status.remote_exchange?.public_count)} PUBLIC · ${this.count(status.remote_exchange?.hidden)} HIDDEN · ${this.count(status.remote_exchange?.removed)} REMOVED
+                </div>
               </div>
-              <div class="dl-federation-note" style="max-width: 580px; font-size: 0.75rem;">
-                Accepted means the signed envelope matched a registered peer key and was retained for audit. It is not factual source proof or cross-node verification, and no local post is created from a remote envelope.
+              <div style="display: flex; flex-direction: column; gap: 0.65rem; align-items: flex-end;">
+                <div class="dl-federation-note" style="max-width: 560px; font-size: 0.75rem; text-align: right;">
+                  Accepted means the signed envelope matched a registered enabled peer key and was retained for audit. Promotion publishes it only in the labeled remote exchange—never as a local post, author, or factual source proof.
+                </div>
+                <a href="/remote" target="_blank" rel="noopener" class="dl-btn dl-btn-outline dl-btn-sm">OPEN PUBLIC EXCHANGE ↗</a>
               </div>
             </div>
           </div>
@@ -616,20 +622,32 @@ const FederationView = {
               <th scope="col">SOURCE NODE</th>
               <th scope="col">STATUS</th>
               <th scope="col">DELIVERY</th>
+              <th scope="col">REMOTE EXCHANGE</th>
               <th scope="col">LOCAL POST</th>
               <th scope="col">REASON</th>
+              <th scope="col" style="text-align: right;">ACTIONS</th>
             </tr>
           </thead>
           <tbody>
             ${items.map(item => {
               const accepted = String(item.status || '').toLowerCase() === 'accepted';
               const source = item.source_node || (item.source_peer_id ? `Peer #${item.source_peer_id}` : 'Deleted or unknown peer');
+              const remoteStatus = String(item.remote_status || '').toLowerCase();
+              const remoteBadge = remoteStatus === 'promoted'
+                ? '<span class="dl-badge dl-badge-cyan">PUBLIC REMOTE</span>'
+                : remoteStatus === 'hidden'
+                  ? '<span class="dl-badge">HIDDEN</span>'
+                  : remoteStatus === 'removed'
+                    ? '<span class="dl-badge">REMOVED</span>'
+                    : '<span class="dl-badge">NOT PUBLISHED</span>';
+              const nextRemoteStatus = remoteStatus === 'promoted' ? 'hidden' : 'promoted';
               return `
                 <tr>
                   <td class="dl-federation-mono" data-label="RECEIVED">${escapeHtml(this.dateText(item.received_at))}</td>
                   <td data-label="SOURCE NODE">
                     <div>${escapeHtml(source)}</div>
                     <div class="dl-federation-key">${escapeHtml(item.key_id || '')}</div>
+                    ${item.source_title ? `<div class="dl-federation-mono" style="margin-top: 0.35rem;">${escapeHtml(this.short(item.source_title, 70))}</div>` : ''}
                   </td>
                   <td data-label="STATUS">
                     ${accepted
@@ -637,8 +655,22 @@ const FederationView = {
                       : this.statusBadge(item.status)}
                   </td>
                   <td class="dl-federation-key" data-label="DELIVERY" title="${escapeHtml(item.delivery_id || '')}">${escapeHtml(this.short(item.delivery_id))}</td>
+                  <td data-label="REMOTE EXCHANGE">${remoteBadge}</td>
                   <td class="dl-federation-mono" data-label="LOCAL POST">${item.local_post_created ? 'CREATED' : 'NONE'}</td>
-                  <td class="dl-federation-mono" data-label="REASON">${escapeHtml(item.reason || (accepted ? 'Signed envelope retained for audit; not factual source proof.' : '—'))}</td>
+                  <td class="dl-federation-mono" data-label="REASON">${escapeHtml(item.reason || (accepted ? 'Signed envelope retained; not factual source proof.' : '—'))}</td>
+                  <td data-label="ACTIONS">
+                    ${accepted ? `
+                      <div class="dl-federation-actions">
+                        <button type="button"
+                          class="dl-btn ${remoteStatus === 'promoted' ? 'dl-btn-outline' : 'dl-btn-accent'} dl-btn-sm btn-remote-status"
+                          data-inbox-id="${escapeHtml(String(item.inbox_id ?? ''))}"
+                          data-status="${nextRemoteStatus}"
+                          data-title="${escapeHtml(item.source_title || source)}">
+                          ${remoteStatus === 'promoted' ? 'HIDE FROM PUBLIC' : 'PUBLISH REMOTE'}
+                        </button>
+                      </div>
+                    ` : '—'}
+                  </td>
                 </tr>
               `;
             }).join('')}
@@ -673,6 +705,12 @@ const FederationView = {
     container.querySelectorAll('.btn-peer-delete').forEach(button => {
       button.addEventListener('click', () => {
         this.deletePeer(container, button.dataset.id, button.dataset.handle || 'peer');
+      });
+    });
+
+    container.querySelectorAll('.btn-remote-status').forEach(button => {
+      button.addEventListener('click', () => {
+        this.setRemoteStatus(container, button.dataset.inboxId, button.dataset.status, button.dataset.title);
       });
     });
 
@@ -792,6 +830,34 @@ const FederationView = {
       await this.load(container);
     } catch (err) {
       App.showToast(`Outbox processing failed: ${err.message}`);
+    }
+  },
+
+  async setRemoteStatus(container, inboxId, status, title) {
+    if (!inboxId || (status !== 'promoted' && status !== 'hidden' && status !== 'removed')) return;
+
+    const promoting = status === 'promoted';
+    const confirmed = await App.confirmAction({
+      title: promoting ? 'PUBLISH REMOTE ENVELOPE' : 'HIDE REMOTE ENVELOPE',
+      message: promoting
+        ? `Publish the signed envelope "${title || 'remote transmission'}" into the labeled public remote exchange? This does not create a local post or transfer local authorship, and the current peer key must still verify.`
+        : `Hide "${title || 'this remote envelope'}" from the public remote exchange? The federation inbox audit record is retained.`,
+      confirmLabel: promoting ? 'PUBLISH REMOTE' : 'HIDE FROM PUBLIC',
+      danger: !promoting
+    });
+    if (!confirmed) return;
+
+    try {
+      const result = await API.post(
+        `/api/v1/federation/inbox/${encodeURIComponent(inboxId)}/status`,
+        { status }
+      );
+      App.showToast(result?.item?.status === 'promoted'
+        ? 'Remote envelope published to the labeled exchange.'
+        : 'Remote envelope removed from public view; audit retained.');
+      await this.load(container);
+    } catch (error) {
+      App.showToast(`Remote exchange update failed: ${error.message}`);
     }
   },
 

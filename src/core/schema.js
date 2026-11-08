@@ -214,6 +214,22 @@ CREATE TABLE IF NOT EXISTS dl_federation_inbox (
   FOREIGN KEY (source_peer_id) REFERENCES dl_federation_peers(peer_id) ON DELETE SET NULL
 );
 
+-- Explicit superadmin promotion of an accepted inbox envelope into a public,
+-- read-only remote exchange. This is a projection over the audit row, never a
+-- local post and never local authorship. Hidden/removed rows stay for audit.
+CREATE TABLE IF NOT EXISTS dl_federation_remote_posts (
+  remote_post_id TEXT PRIMARY KEY,
+  inbox_id INTEGER NOT NULL UNIQUE,
+  envelope_hash TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'promoted'
+    CHECK (status IN ('promoted', 'hidden', 'removed')),
+  promoted_by INTEGER,
+  promoted_at TEXT,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (inbox_id) REFERENCES dl_federation_inbox(inbox_id) ON DELETE CASCADE,
+  FOREIGN KEY (promoted_by) REFERENCES dl_users(ID) ON DELETE SET NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_federation_peers_enabled ON dl_federation_peers(enabled);
 CREATE INDEX IF NOT EXISTS idx_federation_outbox_peer ON dl_federation_outbox(peer_id);
 CREATE INDEX IF NOT EXISTS idx_federation_outbox_due ON dl_federation_outbox(status, next_attempt_at);
@@ -223,6 +239,10 @@ CREATE INDEX IF NOT EXISTS idx_federation_inbox_envelope ON dl_federation_inbox(
 CREATE UNIQUE INDEX IF NOT EXISTS idx_federation_inbox_accepted_envelope
   ON dl_federation_inbox(envelope_hash)
   WHERE status = 'accepted' AND envelope_hash IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_federation_remote_status_promoted
+  ON dl_federation_remote_posts(status, promoted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_federation_remote_promoted_by
+  ON dl_federation_remote_posts(promoted_by);
 
 CREATE TABLE IF NOT EXISTS dl_addons (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

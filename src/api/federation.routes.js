@@ -180,6 +180,32 @@ router.get('/inbox', superadminOnly, (req, res) => {
   });
 });
 
+// POST /api/v1/federation/inbox/:id/status — explicitly promote, hide, or
+// remove an accepted audit row from the public read-only remote exchange.
+// Promotion re-verifies the retained envelope against the current peer key.
+router.post('/inbox/:id/status', superadminOnly, (req, res) => {
+  const inboxId = parsePositiveInteger(req.params.id);
+  if (!inboxId) return safeFailure(res, 400, 'Invalid federation inbox id.');
+
+  const status = req.body && req.body.status;
+  if (!federation.REMOTE_STATUSES.includes(status)) {
+    return safeFailure(res, 400, 'Remote exchange status must be promoted, hidden, or removed.');
+  }
+
+  try {
+    const item = federation.setInboxRemoteStatus({
+      inboxId,
+      status,
+      actorUserId: req.user.ID
+    });
+    res.json({ item });
+  } catch (error) {
+    if (error.status && error.status < 500) return res.status(error.status).json({ error: error.message });
+    console.error('[Federation API] Remote exchange status update failed:', error.message);
+    return safeFailure(res, 500, 'Remote exchange status update failed.');
+  }
+});
+
 // GET /api/v1/federation/status — aggregate superadmin counts.
 router.get('/status', superadminOnly, (req, res) => {
   res.json(federation.getFederationStatus());

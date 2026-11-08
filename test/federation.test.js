@@ -245,7 +245,7 @@ after(async () => {
   fs.rmSync(sandbox, { recursive: true, force: true });
 });
 
-test('fresh schema and migration 3 expose peers, outbox, inbox, foreign keys, and indexes', () => {
+test('fresh schema and migration 5 expose peers, outbox, inbox, remote exchange, foreign keys, and indexes', () => {
   const memory = new Database(':memory:');
   try {
     memory.exec(schema);
@@ -255,7 +255,8 @@ test('fresh schema and migration 3 expose peers, outbox, inbox, foreign keys, an
     for (const required of [
       'dl_federation_peers',
       'dl_federation_outbox',
-      'dl_federation_inbox'
+      'dl_federation_inbox',
+      'dl_federation_remote_posts'
     ]) {
       assert.equal(tables.has(required), true, required);
     }
@@ -267,6 +268,10 @@ test('fresh schema and migration 3 expose peers, outbox, inbox, foreign keys, an
     const inboxForeignKeys = memory.prepare('PRAGMA foreign_key_list(dl_federation_inbox)').all();
     assert.equal(inboxForeignKeys.some(row => row.table === 'dl_federation_peers'), true);
 
+    const remoteForeignKeys = memory.prepare('PRAGMA foreign_key_list(dl_federation_remote_posts)').all();
+    assert.equal(remoteForeignKeys.some(row => row.table === 'dl_federation_inbox'), true);
+    assert.equal(remoteForeignKeys.some(row => row.table === 'dl_users'), true);
+
     const indexes = new Set(memory.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'index'"
     ).all().map(row => row.name));
@@ -275,7 +280,9 @@ test('fresh schema and migration 3 expose peers, outbox, inbox, foreign keys, an
       'idx_federation_outbox_peer',
       'idx_federation_outbox_due',
       'idx_federation_inbox_peer',
-      'idx_federation_inbox_accepted_envelope'
+      'idx_federation_inbox_accepted_envelope',
+      'idx_federation_remote_status_promoted',
+      'idx_federation_remote_promoted_by'
     ]) {
       assert.equal(indexes.has(required), true, required);
     }
@@ -306,9 +313,15 @@ test('fresh schema and migration 3 expose peers, outbox, inbox, foreign keys, an
     assert.equal(inboxColumns.includes(required), true, required);
   }
 
+  const remoteColumns = db.prepare('PRAGMA table_info(dl_federation_remote_posts)').all().map(row => row.name);
+  assert.deepEqual(remoteColumns, [
+    'remote_post_id', 'inbox_id', 'envelope_hash', 'status',
+    'promoted_by', 'promoted_at', 'updated_at'
+  ]);
+
   assert.deepEqual(
     db.prepare('SELECT version FROM dl_schema_migrations ORDER BY version').all().map(row => row.version),
-    [1, 2, 3, 4]
+    [1, 2, 3, 4, 5]
   );
 });
 
@@ -529,6 +542,248 @@ test('inbox verification accepts real signatures, rejects tampering and unknown 
   assert.equal(acceptedRows[0].payload.envelope.signing_node.key_id, peerKey.key_id);
 });
 
+test('remote exchange promotion is explicit, reverified, idempotent, and audit-preserving', () => {
+  const db = getDb();
+  db.prepare('DELETE FROM dl_federation_remote_posts').run();
+  db.prepare('DELETE FROM dl_federation_inbox').run();
+  db.prepare('DELETE FROM dl_federation_outbox').run();
+  db.prepare('DELETE FROM dl_federation_peers').run();
+
+  const actorUserId = Number(db.prepare(`
+    INSERT INTO dl_users (user_login, user_pass, user_email, display_name, role)
+    VALUES ('remote-moderator', 'test-only', 'remote-moderator@example.test', 'Remote Moderator', 'superadmin')
+  `).run().lastInsertRowid);
+  const localPostsBefore = db.prepare('SELECT COUNT(*) AS count FROM dl_posts').get().count;
+
+  let sequence = 0;
+  function acceptRemote(handle, endpoint) {
+    sequence += 1;
+    const key = generatePeerKey();
+    const peer = federation.registerPeer({
+      endpoint_url: endpoint,
+      node_handle: handle,
+      public_key: key.public_key
+    });
+    const delivery = buildDelivery({
+      privateKey: key.privateKey,
+      handle,
+      keyId: key.key_id,
+      deliveryId: `remote_exchange_${sequence}_${crypto.randomBytes(4).toString('hex')}`,
+      parentEnvelopeHash: sequence === 1 ? null : 'A'.repeat(43),
+      chain: [{
+        action: 'original_drop',
+        author: 'Origin Author',
+        node: 'https://origin.example.test',
+        timestamp: new Date().toISOString()
+      }, {
+        action: 're_lettered',
+        curator_id: 'remote-curator',
+        node: handle,
+        commentary: `Remote commentary ${sequence}`,
+        timestamp: new Date().toISOString()
+      }]
+    });
+    const accepted = federation.receiveDelivery(delivery);
+    assert.equal(accepted.httpStatus, 202, JSON.stringify(accepted.body));
+    assert.equal(accepted.body.status, 'accepted');
+    return { key, peer, delivery, inboxId: accepted.body.inbox_id };
+  }
+
+  const first = acceptRemote('@test/remote-first', 'https://remote-first.example');
+  let inboxItem = federation.listInbox().find(item => item.inbox_id === first.inboxId);
+  assert.ok(inboxItem);
+  assert.equal(inboxItem.remote_post_id, null);
+  assert.equal(inboxItem.remote_status, null);
+  assert.equal(inboxItem.promoted_at, null);
+
+  assert.throws(
+    () => federation.setInboxRemoteStatus({
+      inboxId: first.inboxId,
+      status: 'accepted',
+      actorUserId
+    }),
+    error => error.status === 400
+  );
+  assert.throws(
+    () => federation.setInboxRemoteStatus({ inboxId: 0, status: 'promoted', actorUserId }),
+    error => error.status === 400
+  );
+  assert.throws(
+    () => federation.setInboxRemoteStatus({ inboxId: 999999, status: 'promoted', actorUserId }),
+    error => error.status === 404
+  );
+  assert.throws(
+    () => federation.setInboxRemoteStatus({ inboxId: first.inboxId, status: 'hidden', actorUserId }),
+    error => error.status === 409,
+    'an item must be promoted before it can be hidden'
+  );
+
+  const promoted = federation.setInboxRemoteStatus({
+    inboxId: first.inboxId,
+    status: 'promoted',
+    actorUserId
+  });
+  assert.equal(promoted.status, 'promoted');
+  assert.equal(promoted.inbox_id, first.inboxId);
+  assert.equal(promoted.envelope_hash, first.delivery.envelope_hash);
+  assert.match(promoted.remote_post_id, /^rpost_[a-f0-9]{32}$/);
+  assert.equal(promoted.source_node, 'https://origin.example.test');
+  assert.equal(promoted.signing_node_handle, '@test/remote-first');
+  assert.equal(promoted.signing_node.handle, '@test/remote-first');
+  assert.equal(promoted.source_url, 'https://origin.example.test/letter');
+  assert.equal(promoted.source_author, 'Origin Author');
+  assert.equal(promoted.source_title, 'Origin Letter');
+  assert.equal(promoted.source_excerpt, 'Origin excerpt');
+  assert.equal(promoted.curator_commentary, 'Remote signed commentary.');
+  assert.equal(promoted.chain_length, 2);
+  assert.equal(promoted.provenance_chain.length, 2);
+  assert.equal(promoted.parent_envelope_hash, null);
+  assert.equal(promoted.verification.scope, 'peer-ed25519-at-receipt');
+  assert.equal(promoted.verification.peer_registered, true);
+  assert.equal(promoted.verification.peer_enabled, true);
+  assert.equal(promoted.verification.key_id, first.key.key_id);
+
+  let publicList = federation.listPromotedRemote({ limit: 10, offset: 0 });
+  assert.equal(publicList.total, 1);
+  assert.equal(publicList.items.length, 1);
+  const publicItem = publicList.items[0];
+  assert.equal(publicItem.remote_post_id, promoted.remote_post_id);
+  assert.equal(publicItem.inbox_id, first.inboxId);
+  assert.equal(publicItem.envelope_hash, first.delivery.envelope_hash);
+  assert.equal(publicItem.parent_envelope_hash, null);
+  assert.equal(publicItem.chain_length, 2);
+  assert.equal(publicItem.provenance_chain[0].action, 'original_drop');
+  assert.equal(publicItem.verification.scope, 'peer-ed25519-at-receipt');
+  for (const forbidden of ['delivery_id', 'payload', 'reason', 'last_error', 'local_post_id',
+    'source_peer_id', 'promoted_by', 'email']) {
+    assert.equal(Object.hasOwn(publicItem, forbidden), false, forbidden);
+  }
+  assert.doesNotMatch(JSON.stringify(publicItem),
+    /delivery_id|payload_json|local_post_id|last_error|source_peer_id|promoted_by|@example\.test/);
+  assert.equal(publicItem.provenance_chain.some(entry => Object.hasOwn(entry, 'local_post_id')), false);
+
+  inboxItem = federation.listInbox().find(item => item.inbox_id === first.inboxId);
+  assert.equal(inboxItem.remote_status, 'promoted');
+  assert.equal(inboxItem.remote_post_id, promoted.remote_post_id);
+  assert.equal(inboxItem.promoted_by, actorUserId);
+  assert.ok(inboxItem.promoted_at);
+
+  const duplicate = federation.setInboxRemoteStatus({
+    inboxId: first.inboxId,
+    status: 'promoted',
+    actorUserId
+  });
+  assert.equal(duplicate.remote_post_id, promoted.remote_post_id);
+  assert.equal(duplicate.promoted_at, promoted.promoted_at, 'duplicate promotion preserves audit timestamps');
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS count FROM dl_federation_remote_posts').get().count,
+    1,
+    'duplicate promotion is an upsert, not a second row'
+  );
+
+  const hidden = federation.setInboxRemoteStatus({ inboxId: first.inboxId, status: 'hidden', actorUserId });
+  assert.equal(hidden.status, 'hidden');
+  assert.equal(federation.listPromotedRemote().total, 0);
+  inboxItem = federation.listInbox().find(item => item.inbox_id === first.inboxId);
+  assert.equal(inboxItem.status, 'accepted');
+  assert.equal(inboxItem.remote_status, 'hidden');
+  assert.ok(inboxItem.promoted_at, 'hide preserves the original promotion audit');
+
+  const repromoted = federation.setInboxRemoteStatus({
+    inboxId: first.inboxId,
+    status: 'promoted',
+    actorUserId
+  });
+  assert.equal(repromoted.status, 'promoted');
+  assert.equal(federation.listPromotedRemote().total, 1);
+
+  const removed = federation.setInboxRemoteStatus({ inboxId: first.inboxId, status: 'removed', actorUserId });
+  assert.equal(removed.status, 'removed');
+  assert.equal(federation.listPromotedRemote().total, 0);
+  inboxItem = federation.listInbox().find(item => item.inbox_id === first.inboxId);
+  assert.equal(inboxItem.status, 'accepted', 'removal must retain the inbox audit row');
+  assert.equal(inboxItem.remote_status, 'removed');
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS count FROM dl_federation_remote_posts WHERE inbox_id = ?')
+      .get(first.inboxId).count,
+    1,
+    'removal retains the remote audit row'
+  );
+
+  const disabled = acceptRemote('@test/remote-disabled', 'https://remote-disabled.example');
+  federation.setPeerEnabled(disabled.peer.peer_id, false);
+  assert.throws(
+    () => federation.setInboxRemoteStatus({ inboxId: disabled.inboxId, status: 'promoted', actorUserId }),
+    error => error.status === 422 && /enabled|registered/i.test(error.message)
+  );
+  federation.setPeerEnabled(disabled.peer.peer_id, true);
+  assert.equal(
+    federation.setInboxRemoteStatus({ inboxId: disabled.inboxId, status: 'promoted', actorUserId }).status,
+    'promoted'
+  );
+  federation.setInboxRemoteStatus({ inboxId: disabled.inboxId, status: 'hidden', actorUserId });
+
+  const deleted = acceptRemote('@test/remote-deleted', 'https://remote-deleted.example');
+  federation.deletePeer(deleted.peer.peer_id);
+  assert.throws(
+    () => federation.setInboxRemoteStatus({ inboxId: deleted.inboxId, status: 'promoted', actorUserId }),
+    error => error.status === 422
+  );
+
+  const tampered = acceptRemote('@test/remote-tampered', 'https://remote-tampered.example');
+  const storedPayload = JSON.parse(db.prepare(
+    'SELECT payload_json FROM dl_federation_inbox WHERE inbox_id = ?'
+  ).get(tampered.inboxId).payload_json);
+  storedPayload.envelope.curator.commentary = 'Tampered after receipt.';
+  db.prepare('UPDATE dl_federation_inbox SET payload_json = ? WHERE inbox_id = ?')
+    .run(JSON.stringify(storedPayload), tampered.inboxId);
+  assert.throws(
+    () => federation.setInboxRemoteStatus({ inboxId: tampered.inboxId, status: 'promoted', actorUserId }),
+    error => error.status === 422
+  );
+
+  const mismatched = acceptRemote('@test/remote-mismatched', 'https://remote-mismatched.example');
+  db.prepare('UPDATE dl_federation_peers SET public_key_der = ? WHERE peer_id = ?')
+    .run(generatePeerKey().public_key, mismatched.peer.peer_id);
+  assert.throws(
+    () => federation.setInboxRemoteStatus({ inboxId: mismatched.inboxId, status: 'promoted', actorUserId }),
+    error => error.status === 422 && /signature|registered|enabled/i.test(error.message)
+  );
+
+  const rogueKey = generatePeerKey();
+  const rejected = federation.receiveDelivery(buildDelivery({
+    privateKey: rogueKey.privateKey,
+    handle: '@rogue/remote-exchange',
+    keyId: rogueKey.key_id,
+    deliveryId: `rogue_remote_${crypto.randomBytes(4).toString('hex')}`
+  }));
+  assert.equal(rejected.httpStatus, 403);
+  assert.ok(rejected.body.inbox_id);
+  assert.throws(
+    () => federation.setInboxRemoteStatus({
+      inboxId: rejected.body.inbox_id,
+      status: 'promoted',
+      actorUserId
+    }),
+    error => error.status === 409
+  );
+
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS count FROM dl_posts').get().count,
+    localPostsBefore,
+    'remote exchange must never create a local post'
+  );
+
+  // The FK cascade removes the remote projection if an operator deletes the
+  // underlying inbox audit row; normal hide/remove never deletes it.
+  db.prepare('DELETE FROM dl_federation_inbox WHERE inbox_id = ?').run(first.inboxId);
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS count FROM dl_federation_remote_posts WHERE inbox_id = ?')
+      .get(first.inboxId).count,
+    0
+  );
+});
+
 test('the outbox worker is optional, unref-able, and gracefully stoppable', () => {
   assert.equal(federation.isFederationWorkerRunning(), false);
   assert.equal(federation.startFederationWorker({ intervalMs: 1000 }), true);
@@ -725,6 +980,222 @@ test('two real nodes exchange a signed re-letter, detect tampering, deduplicate,
       });
       assert.equal(posts.response.status, 200);
       assert.equal(posts.data.posts.length, 0, 'the inbox must not fabricate local posts');
+    });
+
+    await t.test('superadmin inbox exposes promotion state and the public remote exchange starts empty', async () => {
+      const publicRemote = await jsonRequest(nodeB.baseUrl, '/api/v1/remote?limit=5&offset=0');
+      assert.equal(publicRemote.response.status, 200, JSON.stringify(publicRemote.data));
+      assert.deepEqual(publicRemote.data.remote, []);
+      assert.equal(publicRemote.data.total, 0);
+      assert.equal(publicRemote.data.limit, 5);
+      assert.equal(publicRemote.data.offset, 0);
+      assert.equal(publicRemote.response.headers.get('cache-control'), 'no-store');
+
+      const inbox = await jsonRequest(nodeB.baseUrl, '/api/v1/federation/inbox', {
+        token: nodeB.token
+      });
+      assert.equal(inbox.response.status, 200);
+      const accepted = inbox.data.items.find(item => item.envelope_hash === firstReshare.envelope_hash);
+      assert.ok(accepted);
+      assert.equal(accepted.status, 'accepted');
+      assert.equal(accepted.remote_post_id, null);
+      assert.equal(accepted.remote_status, null);
+      assert.equal(accepted.promoted_at, null);
+
+      const unauthenticated = await jsonRequest(
+        nodeB.baseUrl,
+        `/api/v1/federation/inbox/${accepted.inbox_id}/status`,
+        { method: 'POST', body: { status: 'promoted' } }
+      );
+      assert.equal(unauthenticated.response.status, 401);
+
+      const badStatus = await jsonRequest(
+        nodeB.baseUrl,
+        `/api/v1/federation/inbox/${accepted.inbox_id}/status`,
+        { method: 'POST', token: nodeB.token, body: { status: 'accepted' } }
+      );
+      assert.equal(badStatus.response.status, 400);
+
+      const badId = await jsonRequest(
+        nodeB.baseUrl,
+        '/api/v1/federation/inbox/not-a-number/status',
+        { method: 'POST', token: nodeB.token, body: { status: 'promoted' } }
+      );
+      assert.equal(badId.response.status, 400);
+
+      const missingId = await jsonRequest(
+        nodeB.baseUrl,
+        '/api/v1/federation/inbox/999999/status',
+        { method: 'POST', token: nodeB.token, body: { status: 'promoted' } }
+      );
+      assert.equal(missingId.response.status, 404);
+
+      const unknownRemoteChild = await jsonRequest(nodeB.baseUrl, '/api/v1/remote/not-a-route');
+      assert.equal(unknownRemoteChild.response.status, 404);
+      assert.equal(unknownRemoteChild.data.error, 'API endpoint not found.');
+
+      const wrongMethod = await jsonRequest(nodeB.baseUrl, '/api/v1/remote', { method: 'POST', body: {} });
+      assert.equal(wrongMethod.response.status, 404);
+      assert.equal(wrongMethod.data.error, 'API endpoint not found.');
+    });
+
+    await t.test('promoting one accepted envelope publishes only safe fields and creates no local post', async () => {
+      const inbox = await jsonRequest(nodeB.baseUrl, '/api/v1/federation/inbox', {
+        token: nodeB.token
+      });
+      const accepted = inbox.data.items.find(item => item.envelope_hash === firstReshare.envelope_hash);
+      assert.ok(accepted);
+
+      const promoted = await jsonRequest(
+        nodeB.baseUrl,
+        `/api/v1/federation/inbox/${accepted.inbox_id}/status`,
+        { method: 'POST', token: nodeB.token, body: { status: 'promoted' } }
+      );
+      assert.equal(promoted.response.status, 200, JSON.stringify(promoted.data));
+      assert.equal(promoted.data.item.status, 'promoted');
+      assert.equal(promoted.data.item.inbox_id, accepted.inbox_id);
+      assert.equal(promoted.data.item.envelope_hash, firstReshare.envelope_hash);
+      assert.match(promoted.data.item.remote_post_id, /^rpost_[a-f0-9]{32}$/);
+      assert.equal(promoted.data.item.source_node, 'deadplug://local');
+      assert.equal(promoted.data.item.chain_length, 2);
+      assert.equal(promoted.data.item.parent_envelope_hash, null);
+      assert.equal(promoted.data.item.verification.scope, 'peer-ed25519-at-receipt');
+      assert.equal(promoted.data.item.verification.peer_registered, true);
+      assert.equal(promoted.data.item.verification.peer_enabled, true);
+      assert.equal(promoted.data.item.verification.key_id, nodeA.discovery.public_key.key_id);
+      const remotePostId = promoted.data.item.remote_post_id;
+
+      const duplicate = await jsonRequest(
+        nodeB.baseUrl,
+        `/api/v1/federation/inbox/${accepted.inbox_id}/status`,
+        { method: 'POST', token: nodeB.token, body: { status: 'promoted' } }
+      );
+      assert.equal(duplicate.response.status, 200, JSON.stringify(duplicate.data));
+      assert.equal(duplicate.data.item.remote_post_id, remotePostId);
+      assert.equal(duplicate.data.item.promoted_at, promoted.data.item.promoted_at);
+
+      const publicRemote = await jsonRequest(nodeB.baseUrl, '/api/v1/remote');
+      assert.equal(publicRemote.response.status, 200, JSON.stringify(publicRemote.data));
+      assert.equal(publicRemote.data.total, 1);
+      assert.equal(publicRemote.data.remote.length, 1);
+      const item = publicRemote.data.remote[0];
+      assert.equal(item.remote_post_id, remotePostId);
+      assert.equal(item.inbox_id, accepted.inbox_id);
+      assert.equal(item.envelope_hash, firstReshare.envelope_hash);
+      assert.equal(item.source_node, 'deadplug://local');
+      assert.equal(item.signing_node_handle, nodeA.discovery.node_handle);
+      assert.equal(item.signing_node.handle, nodeA.discovery.node_handle);
+      assert.equal(item.source_title, 'Federated origin dispatch');
+      assert.equal(item.source_excerpt.length > 0, true);
+      assert.equal(item.curator_commentary, 'Node A curates this dispatch for node B.');
+      assert.equal(item.chain_length, 2);
+      assert.equal(item.provenance_chain.length, 2);
+      assert.equal(item.parent_envelope_hash, null);
+      assert.equal(item.key_id, nodeA.discovery.public_key.key_id);
+      assert.equal(item.verification.peer_registered, true);
+      assert.equal(item.verification.peer_enabled, true);
+      assert.equal(Object.hasOwn(item, 'status'), false);
+      for (const forbidden of ['delivery_id', 'payload', 'reason', 'last_error',
+        'source_peer_id', 'promoted_by', 'local_post_id', 'email']) {
+        assert.equal(Object.hasOwn(item, forbidden), false, forbidden);
+      }
+      assert.doesNotMatch(JSON.stringify(publicRemote.data),
+        /delivery_id|payload_json|local_post_id|last_error|source_peer_id|promoted_by|@example\.test/);
+
+      const posts = await jsonRequest(nodeB.baseUrl, '/api/v1/posts?status=all', {
+        token: nodeB.token
+      });
+      assert.equal(posts.response.status, 200);
+      assert.equal(posts.data.posts.length, 0, 'promotion must not create a local post');
+
+      const audited = await jsonRequest(nodeB.baseUrl, '/api/v1/federation/inbox', {
+        token: nodeB.token
+      });
+      const promotedAudit = audited.data.items.find(row => row.inbox_id === accepted.inbox_id);
+      assert.equal(promotedAudit.status, 'accepted');
+      assert.equal(promotedAudit.remote_status, 'promoted');
+      assert.equal(promotedAudit.remote_post_id, remotePostId);
+      assert.ok(promotedAudit.promoted_at);
+      assert.ok(promotedAudit.promoted_by);
+    });
+
+    await t.test('hide, re-promote, and remove change visibility while retaining inbox audit', async () => {
+      const inbox = await jsonRequest(nodeB.baseUrl, '/api/v1/federation/inbox', {
+        token: nodeB.token
+      });
+      const accepted = inbox.data.items.find(item => item.envelope_hash === firstReshare.envelope_hash);
+      assert.ok(accepted);
+      const statusPath = `/api/v1/federation/inbox/${accepted.inbox_id}/status`;
+
+      const hidden = await jsonRequest(nodeB.baseUrl, statusPath, {
+        method: 'POST',
+        token: nodeB.token,
+        body: { status: 'hidden' }
+      });
+      assert.equal(hidden.response.status, 200, JSON.stringify(hidden.data));
+      assert.equal(hidden.data.item.status, 'hidden');
+
+      const hiddenPublic = await jsonRequest(nodeB.baseUrl, '/api/v1/remote');
+      assert.equal(hiddenPublic.data.total, 0);
+      assert.deepEqual(hiddenPublic.data.remote, []);
+      const hiddenAudit = await jsonRequest(nodeB.baseUrl, '/api/v1/federation/inbox', {
+        token: nodeB.token
+      });
+      const hiddenRow = hiddenAudit.data.items.find(row => row.inbox_id === accepted.inbox_id);
+      assert.equal(hiddenRow.status, 'accepted');
+      assert.equal(hiddenRow.remote_status, 'hidden');
+      assert.ok(hiddenRow.promoted_at, 'hide preserves promotion audit');
+
+      const repromoted = await jsonRequest(nodeB.baseUrl, statusPath, {
+        method: 'POST',
+        token: nodeB.token,
+        body: { status: 'promoted' }
+      });
+      assert.equal(repromoted.response.status, 200, JSON.stringify(repromoted.data));
+      assert.equal(repromoted.data.item.status, 'promoted');
+      assert.equal(
+        (await jsonRequest(nodeB.baseUrl, '/api/v1/remote')).data.total,
+        1,
+        're-promotion restores public visibility'
+      );
+
+      const removed = await jsonRequest(nodeB.baseUrl, statusPath, {
+        method: 'POST',
+        token: nodeB.token,
+        body: { status: 'removed' }
+      });
+      assert.equal(removed.response.status, 200, JSON.stringify(removed.data));
+      assert.equal(removed.data.item.status, 'removed');
+
+      const removedPublic = await jsonRequest(nodeB.baseUrl, '/api/v1/remote');
+      assert.equal(removedPublic.data.total, 0);
+      assert.deepEqual(removedPublic.data.remote, []);
+      const removedAudit = await jsonRequest(nodeB.baseUrl, '/api/v1/federation/inbox', {
+        token: nodeB.token
+      });
+      const removedRow = removedAudit.data.items.find(row => row.inbox_id === accepted.inbox_id);
+      assert.equal(removedRow.status, 'accepted', 'removal preserves the inbox audit row');
+      assert.equal(removedRow.remote_status, 'removed');
+      assert.equal(removedRow.remote_post_id, accepted.remote_post_id);
+      assert.ok(removedRow.remote_post_id);
+
+      for (const query of [
+        '?limit=0',
+        '?limit=101',
+        '?limit=not-a-number',
+        '?offset=-1',
+        `?offset=${federation.MAX_REMOTE_OFFSET + 1}`
+      ]) {
+        const invalid = await jsonRequest(nodeB.baseUrl, `/api/v1/remote${query}`);
+        assert.equal(invalid.response.status, 400, query);
+        assert.match(invalid.data.error, /(?:limit|offset)/i);
+      }
+
+      const bounded = await jsonRequest(nodeB.baseUrl, '/api/v1/remote?limit=1&offset=0');
+      assert.equal(bounded.response.status, 200);
+      assert.equal(bounded.data.limit, 1);
+      assert.equal(bounded.data.offset, 0);
+      assert.equal(bounded.data.total, 0);
     });
 
     let secondReshare;
@@ -1087,7 +1558,19 @@ test('two real nodes exchange a signed re-letter, detect tampering, deduplicate,
       assert.equal(inbox.response.status, 200);
       assert.ok(inbox.data.status.accepted >= 3);
       assert.ok(inbox.data.status.rejected >= 3);
+      assert.equal(inbox.data.items.some(item => item.remote_status === 'removed'), true);
+      assert.equal(inbox.data.items.some(item => item.remote_post_id), true);
       assert.doesNotMatch(JSON.stringify(inbox.data), /private_key|stack|\n\s+at\s/i);
+
+      const remoteStatus = await jsonRequest(nodeB.baseUrl, '/api/v1/federation/status', {
+        token: nodeB.token
+      });
+      assert.equal(remoteStatus.response.status, 200);
+      assert.equal(remoteStatus.data.remote_exchange.promoted, 0);
+      assert.equal(remoteStatus.data.remote_exchange.removed, 1);
+      assert.equal(remoteStatus.data.remote_exchange.public_count, 0);
+      assert.equal(remoteStatus.data.limitations.automatic_remote_promotion, false);
+      assert.equal(remoteStatus.data.limitations.cross_node_parent_proof, false);
     });
   } finally {
     await stopNode(nodeA);

@@ -17,7 +17,7 @@ function getServerInitialRoute() {
   try {
     const route = JSON.parse(routeNode.textContent || '{}');
     const hash = typeof route.hash === 'string' ? route.hash : '';
-    if (['#/', '#/reshares', '#/admin', '#/installer'].includes(hash)) return hash;
+    if (['#/', '#/reshares', '#/remote', '#/admin', '#/installer'].includes(hash)) return hash;
     if (/^#\/(letter|page)\/[^/]+$/.test(hash)) return hash;
   } catch {}
   return '';
@@ -209,6 +209,10 @@ const App = {
     if (hash === '#/reshares') {
       BlogReader.currentFilter = 'reshare';
       return BlogReader.render(root);
+    }
+
+    if (hash === '#/remote') {
+      return RemoteReader.render(root);
     }
 
     if (hash.startsWith('#/letter/')) {

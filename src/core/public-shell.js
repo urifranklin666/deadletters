@@ -62,7 +62,7 @@ function initialRouteFromPathname(pathname) {
     }
   }
 
-  const staticMatch = /^\/(reshares|admin|installer)\/?$/.exec(pathname || '');
+  const staticMatch = /^\/(reshares|remote|admin|installer)\/?$/.exec(pathname || '');
   if (!staticMatch) return null;
   const type = staticMatch[1];
   return { type, hash: `#/${type}`, publicPath: `/${type}` };
@@ -145,7 +145,7 @@ function renderMetadata({ post, route, site, requestOrigin, hookEngine = hooks }
   const siteTagline = cleanText(site.tagline, 300) || 'the plug is dead. stay wired.';
   const baseUrl = normalizeBaseUrl(site.url, requestOrigin);
   const isPublicContent = Boolean(post && route && ['letter', 'page'].includes(route.type));
-  const canonicalPath = isPublicContent || ['home', 'reshares'].includes(route?.type) ? route.publicPath : null;
+  const canonicalPath = isPublicContent || ['home', 'reshares', 'remote'].includes(route?.type) ? route.publicPath : null;
   const canonical = canonicalPath ? safeMetadataUrl(canonicalPath, baseUrl) : '';
   const defaultImage = safeMetadataUrl('/uploads/deadplug_editorial_cover.jpg', baseUrl);
   const image = isPublicContent ? safeMetadataUrl(post.featured_image, baseUrl, defaultImage) : defaultImage;

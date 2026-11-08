@@ -31,13 +31,15 @@ const BlogReader = {
       const postType = this.currentFilter === 'reshare' ? 'reshare' : 'all';
       const rawPerPage = Number.parseInt(site.posts_per_page, 10);
       const perPage = Number.isFinite(rawPerPage) ? Math.min(Math.max(rawPerPage, 1), 100) : 12;
-      const [postsRes, themesRes] = await Promise.all([
+      const [postsRes, themesRes, remoteRes] = await Promise.all([
         API.get(`/api/v1/posts?type=${postType}&status=publish&limit=${perPage}`),
-        API.get('/api/v1/themes')
+        API.get('/api/v1/themes'),
+        API.get('/api/v1/remote?limit=1').catch(() => ({ total: 0 }))
       ]);
 
       const posts = (postsRes.posts || []).slice(0, perPage);
       const activeTheme = themesRes.activeTheme;
+      const remoteCount = Number(remoteRes.total) || 0;
       this.perPage = perPage;
       this.resharesEnabled = String(site.reshares_enabled ?? '1') !== '0';
 
@@ -58,6 +60,7 @@ const BlogReader = {
             <nav class="dl-nav-links">
               <a href="/" class="dl-nav-link ${this.currentFilter === 'all' ? 'active' : ''}">DISPATCHES</a>
               ${this.resharesEnabled ? `<a href="/reshares" class="dl-nav-link ${this.currentFilter === 'reshare' ? 'active' : ''}">RESHARE STREAM</a>` : ''}
+              ${remoteCount > 0 ? `<a href="/remote" class="dl-nav-link">REMOTE EXCHANGE</a>` : ''}
               <a href="/feed" target="_blank" rel="noopener" class="dl-nav-link">RSS</a>
               <a href="/admin" class="dl-nav-link" style="color: var(--dl-accent);">CONTROL PANEL →</a>
             </nav>
