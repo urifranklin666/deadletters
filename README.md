@@ -135,7 +135,7 @@ addons/
 
 Old ZIPs, temporary files/directories, SQLite sidecars, VCS/dependency directories, symlinks, and special files are not packaged from asset directories. The SQLite backup is transactionally consistent; asset files are read individually, so a snapshot is not an atomic filesystem-wide freeze while uploads or themes are being edited.
 
-**Snapshots are sensitive, unencrypted files.** In particular, `data/config.json` can contain the JWT and legacy provenance secrets as well as deployment settings, and `data/deadletters.db` contains the node's Ed25519 **private key**. Anyone with a snapshot can sign re-letters as this node and read all of its content. Snapshot output is set to owner-only permissions (`0600`) on POSIX systems; preserve restrictive permissions when copying it. Protect snapshot archives like a database credential backup and rotate secrets if an archive is disclosed. There is no scheduling, encryption, off-site upload, retention management, or hosted backup service here.
+**Snapshots are sensitive, unencrypted files.** In particular, `data/config.json` can contain the JWT and legacy provenance secrets as well as deployment settings, and `data/deadletters.db` contains the node's Ed25519 **private key**. Anyone with a snapshot can sign re-letters as this node and read all of its content. Snapshot output is set to owner-only permissions (`0600`) on POSIX systems; preserve restrictive permissions when copying it. Protect snapshot archives like a database credential backup and rotate secrets if an archive is disclosed. A snapshot made before a node-key rotation still contains the old private key, so rotating the live key does not make that archive safe. There is no scheduling, encryption, off-site upload, retention management, or hosted backup service here.
 
 ### Non-destructive snapshot restore
 
@@ -168,7 +168,7 @@ Run that command from the engine directory. Restoration copies site data only—
 | Editor and rendering | A shared server-side Markdown renderer provides `pullquote`, `callout`, `glitch`, and `dropcap` shortcodes, sanitizes output, and is reused by native API, WordPress-shaped reads, feeds, and editor preview. |
 | Themes | Three bundled themes, browser preview controls, persisted design tokens, custom CSS, theme activation, and ZIP installation are present. Uploaded theme archives are CSS/JSON/raster/font-only and their active `style.css` is loaded dynamically through `/api/v1/themes/active/style.css`. Client-side previews affect only the current browser; they are not a real-time multi-client service. |
 | Resharing | Authenticated users can quote local posts or external URLs with curator commentary. External import performs basic HTML metadata extraction and returns fallback data when fetching or parsing fails. |
-| Provenance | **Local Ed25519 prototype.** New re-letters carry a signed public-key envelope and a full provenance chain. Verification is local to this node; it is not remote identity proof, a trusted timestamp, or authorization of arbitrary external URLs. |
+| Provenance | **Local Ed25519 prototype with local key rotation.** New re-letters carry a signed public-key envelope and a full provenance chain. Rotation retires the current public key into local history and generates a new identity; old envelopes remain locally verifiable. Verification is local to this node; it is not remote identity proof, a trusted timestamp, or authorization of arbitrary external URLs. |
 | Mesh / federation | **Delivery-only MVP.** Superadmin-registered peers, signed outbox delivery, a public verified inbox audit store, idempotency, and retry/dead-letter handling are implemented. There is no ActivityPub, automatic peer/key discovery, remote post creation, cross-node parent proof, or general synchronization; the mesh addon remains a logging/response stub. |
 | WordPress bridge | **Partial and read-only.** Selected `GET` endpoints return WordPress-shaped data; this is not full WordPress REST API emulation or guaranteed drop-in client compatibility. |
 | WordPress migration | Authorized operators can export standard posts/pages as WXR and run bounded, transactional WXR imports. The supported fields and deliberate exclusions are documented below; this is not lossless WordPress migration. |
@@ -200,11 +200,27 @@ The signed envelope contains:
 
 Serialization is deterministic canonical JSON: object keys are sorted recursively, array order is preserved, and non-finite numbers or unsupported values are rejected. The envelope hash is SHA-256 of the exact canonical bytes, encoded as base64url. The signature is Ed25519 over those same bytes, also base64url. Re-lettering an existing re-letter preserves the original source metadata, the full chain, and the parent envelope hash.
 
-`GET /api/v1/reshares/provenance/:id` returns the stored source and chain plus explicit `hash_valid`, `signature_valid`, `verification_status` (`verified`, `invalid`, or `unverified`), `verification_scope`, `key_id`, `envelope_hash`, `parent_envelope_hash`, `public_key_url`, and `reason`. New records use scope `deadletters-ed25519-v1`. Verification recomputes the canonical hash, checks the signature against the local node public key, validates the key ID and algorithm, and confirms that every stored source, commentary, chain, timestamp, and parent-hash field matches the signed envelope. Unknown or missing keys are `unverified`; mismatched fields or tampered bytes are `invalid`.
+`GET /api/v1/reshares/provenance/:id` returns the stored source and chain plus explicit `hash_valid`, `signature_valid`, `verification_status` (`verified`, `invalid`, or `unverified`), `verification_scope`, `key_id`, `envelope_hash`, `parent_envelope_hash`, `public_key_url`, and `reason`. New records use scope `deadletters-ed25519-v1`. Verification recomputes the canonical hash, resolves the signing key ID against the current key or retained retired public keys, checks the signature, validates the key ID and algorithm, and confirms that every stored source, commentary, chain, timestamp, and parent-hash field matches the signed envelope. Retired-key results also carry `key_status: "retired"`, `key_retired: true`, `key_retired_at`, and `key_retirement_reason`. Unknown or missing keys are `unverified`; mismatched fields or tampered bytes are `invalid`.
 
 Rows created before this feature have no envelope. They continue to use the legacy installation-local HMAC verifier and scope `local-integrity`; new rows never use HMAC. Legacy signatures may be **invalid or unverified** if the original provenance secret was rotated, the record was edited, or the row predates the current HMAC scheme.
 
 This is strictly **local node-envelope verification**. It proves that this node's stored record matches a signature made by this node's key. Registering a peer and receiving a remote envelope does **not** turn that into factual authorship proof, authorization of an arbitrary external URL, validation of the remote source's content, a trusted timestamp, or cross-node agreement. The delivery-only federation MVP below adds an explicitly trusted peer allowlist and signed inbox/outbox transport, but it still does not fetch remote keys automatically, verify parents across nodes, or create local posts from remote envelopes. It has no retraction protocol or general federation synchronization. The mesh addon remains a logging/response stub.
+
+### Node identity rotation
+
+Rotate the node's Ed25519 identity with an explicit reason:
+
+```bash
+node bin/deadletters.js rotate-node-key --reason "why this key is being retired"
+```
+
+The command archives the current **public** key in `dl_node_key_history` (node handle, SPKI DER public key, key ID, algorithm, creation and retirement timestamps, and reason), generates a new Ed25519 keypair, and updates the singleton `dl_node_identity` row in one transaction. The retired private key is not copied into history or printed. Migration 4 creates the history table, and the fresh-install schema includes it. Snapshots inherit the table automatically because it lives in SQLite; engine exports already include the provenance module and migrations.
+
+After rotation, only the current key is advertised by `GET /.well-known/deadletters.json`. Verification still resolves the envelope's signing key ID among the current key plus retired public keys, so older envelopes remain **locally** verifiable and report `key_status: "retired"` / `key_retired: true`. Unknown key IDs remain `unverified`, and an invalid signature remains `invalid`.
+
+**Trust consequences:** this changes the node's public identity. Peers explicitly registered with the old public key will reject or ignore new deliveries until an operator re-registers the new key out-of-band from `/.well-known/deadletters.json`. Old envelopes are not automatically re-signed, re-delivered, or transferred to the new identity; their local history is only evidence retained by this node. Rotate only after understanding the federation impact.
+
+**Caveats:** snapshots and database copies made before rotation still contain the old private key and remain sensitive. A key that was disclosed or compromised cannot be made safe by rotation; rotation only limits future signing under the old key. There is no revocation broadcast, no remote proof that a retired key was never misused, and no way to force peers to accept the new identity. Keep runtime data private and treat rotation as an incident-response action, not a guarantee of safety.
 
 ### Delivery-only federation MVP
 
@@ -294,12 +310,15 @@ Useful read routes include:
 ```bash
 npm run check:syntax
 npm test
+npx playwright install chromium   # first local run
+npm run test:e2e
 ```
 
 - `check:syntax` recursively runs Node's syntax checker over project `.js`, `.cjs`, and `.mjs` files. It skips dependency/VCS directories, generated build/export/log directories, and runtime data/upload directories.
-- `test` runs Node's built-in `node --test` runner without adding a third-party test framework. The suite includes unit, route/application integration, archive-security, export/snapshot/restore, and WXR namespace/entity/rollback/round-trip/upload-limit tests; database and archive tests use temporary runtime directories and close their SQLite connections.
+- `test` runs Node's built-in `node --test` runner. The suite includes unit, route/application integration, archive-security, export/snapshot/restore, WXR namespace/entity/rollback/round-trip/upload-limit, provenance/tamper, key-rotation, operations, static-asset, and two-node federation tests. Database tests use temporary runtime directories and close their SQLite connections.
+- `test:e2e` runs Playwright Chromium against a fresh isolated node. It drives the end-to-end browser lifecycle: install wizard, seeded direct/canonical pages, public signed re-letter verification, anonymous comment plus moderation, editor preview/publish sanitization, federation control surface, and an authenticated engine ZIP download. It also fails on runtime page errors or CSP violations. Browser binaries are not committed.
 
-GitHub Actions runs `npm ci`, the syntax check, and `npm test` on Node.js 24 for pushes and pull requests. These checks do not replace deployment, migration, or browser testing.
+GitHub Actions runs `npm ci`, syntax, and unit/integration tests on Node.js 24 in `.github/workflows/ci.yml`. A separate `.github/workflows/e2e.yml` installs Chromium with dependencies and runs the browser suite, retaining traces/screenshots on failure.
 
 ## CLI commands
 

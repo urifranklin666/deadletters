@@ -308,7 +308,7 @@ test('fresh schema and migration 3 expose peers, outbox, inbox, foreign keys, an
 
   assert.deepEqual(
     db.prepare('SELECT version FROM dl_schema_migrations ORDER BY version').all().map(row => row.version),
-    [1, 2, 3]
+    [1, 2, 3, 4]
   );
 });
 

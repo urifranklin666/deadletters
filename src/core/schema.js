@@ -154,6 +154,20 @@ CREATE TABLE IF NOT EXISTS dl_node_identity (
   created_at TEXT NOT NULL
 );
 
+-- Retired node keys are public history only. Retired private keys are never
+-- retained: historical envelopes remain locally verifiable, but old signing
+-- material must not be recoverable from this table.
+CREATE TABLE IF NOT EXISTS dl_node_key_history (
+  history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  node_handle TEXT NOT NULL,
+  public_key_der TEXT NOT NULL,
+  key_id TEXT NOT NULL UNIQUE,
+  algorithm TEXT NOT NULL DEFAULT 'Ed25519',
+  created_at TEXT NOT NULL,
+  retired_at TEXT NOT NULL,
+  reason TEXT NOT NULL
+);
+
 -- Delivery-only federation MVP. Peers are explicitly trusted by a superadmin;
 -- public keys are never fetched automatically from remote endpoints.
 CREATE TABLE IF NOT EXISTS dl_federation_peers (
@@ -243,6 +257,7 @@ CREATE INDEX IF NOT EXISTS idx_postmeta_post ON dl_postmeta(post_id);
 CREATE INDEX IF NOT EXISTS idx_reshares_post ON dl_reshares(post_id);
 CREATE INDEX IF NOT EXISTS idx_comments_post ON dl_comments(comment_post_ID);
 CREATE INDEX IF NOT EXISTS idx_revisions_post ON dl_revisions(post_id);
+CREATE INDEX IF NOT EXISTS idx_node_key_history_retired_at ON dl_node_key_history(retired_at);
 `;
 
 module.exports = schema;

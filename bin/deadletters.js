@@ -3,9 +3,10 @@ const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
 const config = require('../src/config');
-const { initDb, updateOption, getDb } = require('../src/core/db');
+const { initDb, updateOption, closeDb } = require('../src/core/db');
 const { hashPassword } = require('../src/core/auth');
 const { packageEngineZip, packageSiteSnapshot, restoreSiteSnapshot } = require('../src/core/exporter');
+const { rotateNodeIdentity } = require('../src/core/provenance');
 const { startServer } = require('../src/server');
 
 const [,, command, ...args] = process.argv;
@@ -115,6 +116,58 @@ async function handleSnapshotRestore(args) {
   console.log(result.startCommand);
 }
 
+function parseRotationReason(args) {
+  let reason = null;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === '--reason') {
+      if (index + 1 >= args.length || args[index + 1].startsWith('--')) {
+        throw new Error('Usage: deadletters rotate-node-key --reason "why this key is being retired"');
+      }
+      reason = args[index + 1];
+      index += 1;
+    } else if (argument.startsWith('--reason=')) {
+      reason = argument.slice('--reason='.length);
+    } else {
+      throw new Error(`Unknown rotate-node-key option: ${argument}`);
+    }
+  }
+
+  if (typeof reason !== 'string' || reason.trim().length === 0) {
+    throw new Error('Usage: deadletters rotate-node-key --reason "why this key is being retired"');
+  }
+  return reason;
+}
+
+function handleRotateNodeKey(args) {
+  printBanner();
+  console.log('--- NODE IDENTITY ROTATION ---\n');
+  console.log('WARNING: This command changes the node identity.');
+  console.log('Peers must re-register this node with the new public key; old envelopes are not');
+  console.log('automatically delivered under the new identity. Existing envelopes remain locally');
+  console.log('verifiable through retained public-key history, but a compromised private key');
+  console.log('cannot be made safe. Snapshots made before this rotation still contain the old');
+  console.log('private key and remain sensitive. No private key material will be printed.\n');
+
+  const reason = parseRotationReason(args);
+
+  try {
+    const result = rotateNodeIdentity({ reason });
+    console.log('✓ Node identity rotated.');
+    console.log(`  Handle:      ${result.current.handle}`);
+    console.log(`  Previous key: ${result.retired.key_id}`);
+    console.log(`  Current key:  ${result.current.key_id}`);
+    console.log(`  Retired at:   ${result.retired.retired_at}`);
+    console.log(`  Reason:       ${result.reason}`);
+    console.log(`  Retired public keys retained locally: ${result.history.length}`);
+    console.log('\nRe-register the new public key with each peer from /.well-known/deadletters.json.');
+    console.log('Historical envelopes remain locally verifiable; they are not re-signed or re-delivered.');
+  } finally {
+    closeDb();
+  }
+}
+
 function printHelp() {
   printBanner();
   console.log(`
@@ -127,6 +180,12 @@ Commands:
   snapshot-zip        Export a consistent site snapshot (data + uploads + themes + addons)
   snapshot-restore <archive> <target-directory>
                       Restore into a new or empty directory without overwriting
+  rotate-node-key --reason "..."
+                      Retire the current Ed25519 node key and create a new one.
+                      Changes node identity: peers must re-register the new public
+                      key. Old envelopes stay only locally verifiable; snapshots
+                      before rotation still contain the old private key and remain
+                      sensitive. No private key is printed.
   help                Display this assistance manual
 
 Environment Variables:
@@ -156,6 +215,9 @@ async function main() {
       break;
     case 'snapshot-restore':
       await handleSnapshotRestore(args);
+      break;
+    case 'rotate-node-key':
+      handleRotateNodeKey(args);
       break;
     case 'help':
     case '--help':

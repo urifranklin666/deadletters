@@ -7,13 +7,13 @@ Date: 2026-11-08
 - Project root: `/run/media/deadplug/CODE/deadletters`
 - Public remote: `https://github.com/urifranklin666/deadletters.git`
 - Branch: `main`, tracking `origin/main`.
-- HEAD remains `7ece279` (`Initial commit: Deadletters v1.0.0 brutalist blogging engine`).
-- **All of the implementation below is uncommitted and unpushed.**
-- The working tree contains a large, intentional Phase 0–4 change set. **Do not run `git reset`, `git clean`, or discard changes.**
-- The only staged change is the deletion of `src/content/data/config.json` from Git’s index. The local runtime config remains on disk and is ignored.
+- Base milestone commit: `b7b06b6` (`feat: harden publishing and add signed federation`), pushed to `origin/main`.
+- The latest key-rotation and Playwright/E2E changes are **uncommitted and unpushed**.
+- The working tree contains additional intentional changes. **Do not run `git reset`, `git clean`, or discard changes.**
+- Runtime config was removed from Git tracking in the milestone commit; the local runtime file remains on disk and is ignored.
 - Local runtime secrets were rotated during this work. The local config and SQLite database are mode `0600`. The original public-repository JWT secret must still be treated as compromised because it remains in Git history.
 - Existing legacy HMAC reshare signatures may now verify as invalid after secret rotation; this is expected. New reshares use Ed25519.
-- No commit or push was made. Ask for explicit confirmation before any further Git mutation.
+- Ask for explicit confirmation before any further commit/push.
 - No `AGENTS.md` exists.
 
 ## 2. Final verification
@@ -21,8 +21,9 @@ Date: 2026-11-08
 Current verified state:
 
 ```text
-npm test                 -> 162 tests passed, 0 failed
-npm run check:syntax     -> 70 JavaScript files passed
+npm test                 -> 169 tests passed, 0 failed
+npm run check:syntax     -> 74 JavaScript files passed
+npm run test:e2e         -> 1 Chromium lifecycle passed
 git diff --check         -> clean
 ```
 
@@ -48,7 +49,7 @@ Keep the current architecture:
 
 - CommonJS Node.js, Express 5, synchronous `better-sqlite3` with WAL.
 - No-build vanilla browser frontend with hash routes plus server-injected canonical initial routes.
-- Node built-in `node:test`; no Playwright/browser suite yet.
+- Node built-in `node:test` for unit/integration and Playwright Chromium for functional browser E2E.
 - Node `>=22.12.0`; CI uses Node 24.
 - Proprietary package metadata; no open-source LICENSE selected.
 
@@ -57,6 +58,8 @@ Commands:
 ```bash
 npm test
 npm run check:syntax
+npx playwright install chromium
+npm run test:e2e
 git diff --check
 npm start
 ```
@@ -144,6 +147,11 @@ npm start
 - Re-lettering a re-letter preserves original source metadata, complete chain, and parent envelope hash.
 - Verification detects tampered commentary/source/chain/hash and reports `verified`/`invalid`/`unverified` with explicit scope, key ID, hashes, public-key URL, and reason.
 - Legacy HMAC rows remain verifiable only as `local-integrity`; rotation can make old signatures invalid.
+- Migration 4 adds `dl_node_key_history` with retired **public** keys only: node handle, SPKI DER public key, key ID, algorithm, creation/retirement timestamps, and reason. No retired private key is retained.
+- `rotateNodeIdentity({ reason })` transactionally archives the current public key, generates a new Ed25519 keypair, and updates the singleton identity. It rejects a missing identity, a reason shorter than 8 non-whitespace characters, and duplicate key IDs. It returns public current/retired metadata only.
+- Verification resolves each stored `signing_key_id` against the current key plus retired public keys. Historical envelopes still verify locally and report `key_status: "retired"` / `key_retired: true`; unknown keys remain `unverified` and bad signatures remain `invalid`. Discovery advertises only the current key.
+- CLI: `node bin/deadletters.js rotate-node-key --reason "..."`. It warns that node identity changes, peers must re-register the new key, old envelopes are not auto-delivered under the new identity, pre-rotation snapshots remain sensitive, and no private key is printed. The command closes the database before exit.
+- Federation core is deliberately unchanged: old envelopes are not silently sent under the new trust identity, and peers must re-register the new public key out-of-band.
 
 #### Delivery-only federation
 
@@ -167,13 +175,16 @@ npm start
 - Role-aware admin landing/navigation and hidden unauthorized controls.
 - Accessible confirmation/modal patterns, focus trapping/Escape, responsive moderation/federation tables.
 - Honest addon metadata: compatibility markers and local license status only; no fake enterprise verification or peer relay claims.
+- Playwright Chromium lifecycle covers fresh install, canonical direct pages, signed public re-letter verification, anonymous comment and moderation, editor preview/publish sanitization, federation UI, authenticated ZIP download, and CSP/runtime-error assertions.
+- Separate Browser E2E GitHub Actions workflow installs Chromium and retains traces/screenshots/reports on failure.
+- Node-key rotation archives retired public keys, keeps historical envelopes locally verifiable, exposes only the current key in discovery, and provides `rotate-node-key --reason`.
 
 ## 5. Remaining limitations and known gaps
 
 These are deliberate next steps, not defects hidden by the test suite.
 
-1. **No browser E2E/visual/accessibility suite.** Current tests are HTTP/unit/integration plus syntax. Add Playwright for fresh install → admin → publish → canonical URL → comment/moderation → reshare → federation UI → export/restore.
-2. **No node-key rotation/revocation workflow.** A disclosed DB/snapshot means the node private key is compromised. A future migration should retain retired public keys for historical verification while rotating the current signing key.
+1. **Functional Chromium E2E exists, but visual regression and comprehensive accessibility automation do not.** Expand Playwright coverage for peer registration/outbox delivery, snapshot restore, role-specific admin flows, mobile layouts, and add screenshot/axe checks.
+2. **Node-key rotation is local-only, not revocation.** Rotation retains retired public keys for local historical verification and changes the current signing identity, but it cannot revoke copies of old private keys, notify peers automatically, re-sign or re-deliver old envelopes under the new identity, or make disclosed snapshots/backups safe. Peers must re-register the new public key out-of-band, and a compromised key remains compromised.
 3. **Federation remains delivery-only.** It does not auto-discover/fetch keys, ingest remote envelopes into the public blog, verify parents across nodes, retract content, or implement ActivityPub/general sync. Inbox is audit-only.
 4. **Snapshots contain private keys and config secrets and are unencrypted.** They are mode 0600 but must be protected like credential backups.
 5. **No deployment automation/scheduling.** No systemd unit, reverse-proxy config, TLS termination, backup schedule, retention, or off-site backup.
@@ -190,27 +201,23 @@ These are deliberate next steps, not defects hidden by the test suite.
 
 ## 6. Recommended next steps
 
-### 1. Browser regression suite
+### 1. Expand browser and accessibility coverage
 
-Add Playwright with CI Chromium and cover:
+The baseline Playwright path now covers fresh install, seeded/canonical pages, public re-letter verification, anonymous comment/moderation, editor preview/publish sanitization, federation UI, and authenticated ZIP download. Extend it with:
 
-- Fresh install from empty temp runtime.
-- Superadmin instant login and role-aware landing.
-- Publish/preview/safe shortcode rendering.
-- Direct canonical URL and metadata.
-- Comment submission/pending/moderation.
-- Re-letter creation and verification UI.
-- Federation peer registration/outbox processing against a second test node.
-- Downloads using bearer auth.
-- Snapshot export and non-destructive restore.
+- Two-node peer registration and outbox processing through browser controls.
+- Operator/author/art-director role-specific admin landings and denied routes.
+- Snapshot export plus restore smoke.
+- Mobile viewport and keyboard/focus checks.
+- Automated accessibility scanning and deliberate visual snapshots.
+- Download content validation, not just a successful Chromium download event.
 
-### 2. Node identity rotation
+### 2. Node identity rotation follow-ups
 
-- Add migration/history table for retired public keys.
-- Rotate current key in a transaction; retain retired public keys for local historical verification.
-- CLI with explicit confirmation and backup warning.
-- Update discovery/federation trust documentation.
-- Do not print private material.
+- Rotation, migration 4, public retired-key history, local historical verification, and the explicit `rotate-node-key --reason` CLI are implemented.
+- Still missing: a revocation broadcast or trusted key-transition protocol, peer notification automation, and re-signing/re-delivery of old envelopes under a new identity. Peers must manually re-register the new public key.
+- Pre-rotation snapshots and database copies still contain old private keys. Rotation cannot make a disclosed key safe.
+- Do not add private key material to history, CLI output, logs, or exports.
 
 ### 3. Decide federation product boundary
 
@@ -236,7 +243,7 @@ Benchmark cold boot, publication reads, feed generation, export/restore, and fed
 
 - Auth/capabilities: `src/core/auth.js`, `src/core/capabilities.js`
 - Rendering/XSS: `src/core/content-renderer.js`, frontend `public/app/js/api.js`
-- Provenance: `src/core/provenance.js`, `test/provenance.test.js`
+- Provenance: `src/core/provenance.js`, `test/provenance.test.js`, `test/key-rotation.test.js`
 - Federation: `src/core/federation.js`, `src/api/federation.routes.js`, `test/federation.test.js`
 - Public shell/SEO: `src/core/public-shell.js`, `test/public-shell.test.js`
 - Database/migrations: `src/core/db.js`, `src/core/schema.js`, `src/core/migrations.js`

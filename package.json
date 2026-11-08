@@ -13,7 +13,8 @@
     "export-zip": "node bin/deadletters.js export-zip",
     "snapshot-zip": "node bin/deadletters.js snapshot-zip",
     "check:syntax": "node scripts/check-syntax.js",
-    "test": "node --test"
+    "test": "node --test",
+    "test:e2e": "playwright test"
   },
   "keywords": [
     "cms",
@@ -46,5 +47,8 @@
     "marked": "^18.1.1",
     "multer": "^2.5.0",
     "sanitize-html": "^2.18.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0"
   }
 }

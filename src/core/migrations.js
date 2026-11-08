@@ -105,6 +105,27 @@ const migrations = [
           WHERE status = 'accepted' AND envelope_hash IS NOT NULL;
       `);
     }
+  },
+  {
+    version: 4,
+    name: 'node-key-rotation-history',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS dl_node_key_history (
+          history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          node_handle TEXT NOT NULL,
+          public_key_der TEXT NOT NULL,
+          key_id TEXT NOT NULL UNIQUE,
+          algorithm TEXT NOT NULL DEFAULT 'Ed25519',
+          created_at TEXT NOT NULL,
+          retired_at TEXT NOT NULL,
+          reason TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_node_key_history_retired_at
+          ON dl_node_key_history(retired_at);
+      `);
+    }
   }
 ];
 

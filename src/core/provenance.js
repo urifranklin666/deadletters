@@ -23,6 +23,9 @@ const LEGACY_VERIFICATION_SCOPE = 'local-integrity';
 const PUBLIC_KEY_PATH = '/.well-known/deadletters.json';
 const DEFAULT_NODE_HANDLE = '@deadplug/main-node';
 const DEFAULT_SITE_URL = 'http://localhost:3000';
+const NODE_KEY_HISTORY_TABLE = 'dl_node_key_history';
+const MIN_ROTATION_REASON_LENGTH = 8;
+const MAX_ROTATION_REASON_LENGTH = 500;
 
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const LEGACY_SIGNATURE_PATTERN = /^[a-f0-9]{64}$/i;
@@ -204,6 +207,190 @@ function toPublicIdentity(row) {
     public_key: row.public_key_der,
     created_at: row.created_at,
     public_key_url: getPublicKeyUrl()
+  };
+}
+
+function toPublicHistoryEntry(row) {
+  if (!row) return null;
+  return {
+    node_handle: row.node_handle,
+    handle: row.node_handle,
+    public_key_der: row.public_key_der,
+    public_key: row.public_key_der,
+    key_id: row.key_id,
+    algorithm: row.algorithm,
+    created_at: row.created_at,
+    retired_at: row.retired_at,
+    reason: row.reason,
+    key_status: 'retired',
+    retired: true,
+    key_retired: true
+  };
+}
+
+function readHistoryRows() {
+  return getDb().prepare(`
+    SELECT history_id, node_handle, public_key_der, key_id, algorithm, created_at, retired_at, reason
+    FROM dl_node_key_history
+    ORDER BY history_id ASC
+  `).all();
+}
+
+/**
+ * Return retired public keys only. No retired private key is stored or exposed.
+ */
+function listRetiredNodeKeys() {
+  return readHistoryRows().map(toPublicHistoryEntry);
+}
+
+/**
+ * Resolve a key id for local verification. The current key wins; retired public
+ * keys remain available so historical envelopes survive a rotation.
+ */
+function findPublicNodeKey(keyId) {
+  if (typeof keyId !== 'string' || keyId.length === 0) return null;
+
+  const current = readPublicIdentityRow();
+  if (current && current.key_id === keyId) {
+    return {
+      ...toPublicIdentity(current),
+      public_key_der: current.public_key_der,
+      key_status: 'current',
+      retired: false,
+      key_retired: false,
+      key_retired_at: null,
+      key_retirement_reason: null
+    };
+  }
+
+  const row = getDb().prepare(`
+    SELECT history_id, node_handle, public_key_der, key_id, algorithm, created_at, retired_at, reason
+    FROM dl_node_key_history WHERE key_id = ?
+  `).get(keyId);
+  if (!row) return null;
+
+  const entry = toPublicHistoryEntry(row);
+  return {
+    ...entry,
+    key_retired_at: entry.retired_at,
+    key_retirement_reason: entry.reason
+  };
+}
+
+function normalizeRotationReason(value) {
+  const reason = typeof value === 'string' ? value.trim() : '';
+  if (reason.length < MIN_ROTATION_REASON_LENGTH) {
+    throw new Error(
+      `A rotation reason of at least ${MIN_ROTATION_REASON_LENGTH} non-whitespace characters is required.`
+    );
+  }
+  if (reason.length > MAX_ROTATION_REASON_LENGTH) {
+    throw new Error(`Rotation reason must be at most ${MAX_ROTATION_REASON_LENGTH} characters.`);
+  }
+  return reason;
+}
+
+function historyHasKeyId(db, keyId) {
+  return Boolean(
+    db.prepare('SELECT 1 FROM dl_node_key_history WHERE key_id = ?').get(keyId)
+  );
+}
+
+/**
+ * Retire the current public key, replace the singleton Ed25519 identity, and
+ * retain only public history for local verification of older envelopes.
+ *
+ * This is intentionally a one-way local operation: it cannot revoke copies of
+ * old private keys in snapshots, restore old envelopes to a peer that still
+ * trusts the previous key, or make a disclosed key safe. Peers must re-register
+ * the new public key out-of-band.
+ */
+function rotateNodeIdentity({ reason } = {}) {
+  const normalizedReason = normalizeRotationReason(reason);
+  const db = getDb();
+
+  const rotate = db.transaction(() => {
+    const current = db.prepare(`
+      SELECT identity_id, node_handle, public_key_der, private_key_der, key_id, algorithm, created_at
+      FROM dl_node_identity WHERE identity_id = 1
+    `).get();
+
+    if (!current) {
+      throw new Error('No local node identity exists to rotate.');
+    }
+    if (historyHasKeyId(db, current.key_id)) {
+      throw new Error(`Cannot rotate: key id "${current.key_id}" already exists in retired key history.`);
+    }
+
+    const handle = normalizeNodeHandle(getOption('site_node_handle', current.node_handle));
+    let generated = null;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const candidate = generateNodeIdentity(handle);
+      if (candidate.key_id === current.key_id) continue;
+      if (historyHasKeyId(db, candidate.key_id)) continue;
+      generated = candidate;
+      break;
+    }
+    if (!generated) {
+      throw new Error('Cannot rotate: generated key id duplicates the current or a retired key id.');
+    }
+
+    const retiredAt = new Date().toISOString();
+    const inserted = db.prepare(`
+      INSERT INTO dl_node_key_history (
+        node_handle, public_key_der, key_id, algorithm, created_at, retired_at, reason
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      current.node_handle,
+      current.public_key_der,
+      current.key_id,
+      current.algorithm,
+      current.created_at,
+      retiredAt,
+      normalizedReason
+    );
+
+    const updated = db.prepare(`
+      UPDATE dl_node_identity
+      SET node_handle = ?, public_key_der = ?, private_key_der = ?, key_id = ?, algorithm = ?, created_at = ?
+      WHERE identity_id = 1
+    `).run(
+      generated.node_handle,
+      generated.public_key_der,
+      generated.private_key_der,
+      generated.key_id,
+      generated.algorithm,
+      generated.created_at
+    );
+    if (updated.changes !== 1) {
+      throw new Error('Failed to update the singleton node identity.');
+    }
+
+    return {
+      retired: db.prepare(`
+        SELECT history_id, node_handle, public_key_der, key_id, algorithm, created_at, retired_at, reason
+        FROM dl_node_key_history WHERE history_id = ?
+      `).get(inserted.lastInsertRowid),
+      current: db.prepare(`
+        SELECT node_handle, public_key_der, key_id, algorithm, created_at
+        FROM dl_node_identity WHERE identity_id = 1
+      `).get()
+    };
+  });
+
+  const result = rotate();
+  return {
+    rotated: true,
+    rotated_at: result.retired.retired_at,
+    reason: normalizedReason,
+    current: {
+      ...toPublicIdentity(result.current),
+      key_status: 'current',
+      retired: false,
+      key_retired: false
+    },
+    retired: toPublicHistoryEntry(result.retired),
+    history: listRetiredNodeKeys()
   };
 }
 
@@ -458,7 +645,11 @@ function verifyEd25519Record(record) {
     key_id: record.signing_key_id || null,
     envelope_hash: computedHash,
     parent_envelope_hash: record.parent_envelope_hash ?? envelope.parent_envelope_hash ?? null,
-    public_key_url: getPublicKeyUrl()
+    public_key_url: getPublicKeyUrl(),
+    key_status: 'unknown',
+    key_retired: false,
+    key_retired_at: null,
+    key_retirement_reason: null
   };
 
   if (record.signature_algorithm !== SIGNATURE_ALGORITHM) {
@@ -468,18 +659,20 @@ function verifyEd25519Record(record) {
     return unverifiedResult(base, 'Signing key id is missing from the stored record.');
   }
 
-  const identity = readPublicIdentityRow();
-  if (!identity) {
-    return unverifiedResult(base, 'Local node public key is unavailable.');
-  }
-  if (record.signing_key_id !== identity.key_id) {
+  const key = findPublicNodeKey(record.signing_key_id);
+  if (!key) {
     return unverifiedResult(base, `Unknown signing key id "${record.signing_key_id}".`);
   }
+
+  base.key_status = key.key_status;
+  base.key_retired = Boolean(key.key_retired);
+  base.key_retired_at = key.key_retired_at || null;
+  base.key_retirement_reason = key.key_retirement_reason || null;
 
   const signatureValid = verifyEnvelopeSignature(
     envelope,
     record.envelope_signature,
-    identity.public_key_der
+    key.public_key_der
   );
   base.signature_valid = signatureValid;
 
@@ -542,7 +735,9 @@ function verifyEd25519Record(record) {
     ...base,
     valid: true,
     verification_status: 'verified',
-    reason: 'Canonical envelope hash and Ed25519 signature match the local node record.'
+    reason: base.key_retired
+      ? 'Canonical envelope hash and Ed25519 signature match a retained retired local public key.'
+      : 'Canonical envelope hash and Ed25519 signature match the current local node record.'
   };
 }
 
@@ -580,12 +775,19 @@ module.exports = {
   VERIFICATION_SCOPE,
   LEGACY_VERIFICATION_SCOPE,
   PUBLIC_KEY_PATH,
+  NODE_KEY_HISTORY_TABLE,
+  MIN_ROTATION_REASON_LENGTH,
+  MAX_ROTATION_REASON_LENGTH,
   canonicalJson,
   createEnvelopeHash,
+  createKeyId,
   createSignedEnvelope,
+  findPublicNodeKey,
   getDiscoveryDocument,
   getPublicNodeIdentity,
   getPublicKeyUrl,
+  listRetiredNodeKeys,
+  rotateNodeIdentity,
   signEnvelope,
   verifyEnvelopeSignature,
   verifyReshareRecord

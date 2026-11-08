@@ -27,3 +27,10 @@ desktop.ini
 # Logs
 logs/
 *.log
+
+# Browser test runtime and reports
+e2e-runtime/
+.e2e-results/
+.e2e-report/
+test-results/
+playwright-report/
