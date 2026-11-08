@@ -28,6 +28,9 @@ desktop.ini
 logs/
 *.log
 
+# Local backup archives (scripts/backup.sh default)
+backups/
+
 # Browser test runtime and reports
 e2e-runtime/
 .e2e-results/

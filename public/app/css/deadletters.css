@@ -18,7 +18,7 @@
   
   --dl-text: #f3f5f8;
   --dl-text-muted: #868e9d;
-  --dl-text-faint: #525a68;
+  --dl-text-faint: #788293;
   
   /* Brand Accents */
   --dl-accent: #d6ff00; /* Electric Acid */
@@ -147,6 +147,9 @@ code, pre {
   display: flex;
   align-items: center;
   gap: 1rem;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
 }
 
 .dl-brand-logo {
@@ -156,8 +159,12 @@ code, pre {
   letter-spacing: -0.03em;
   display: flex;
   align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
   gap: 0.5rem;
   color: var(--dl-text);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .dl-brand-badge {
@@ -180,6 +187,8 @@ code, pre {
   border: 1px solid var(--dl-border);
   padding: 4px 10px;
   background: rgba(20, 22, 29, 0.6);
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .dl-beacon-pulse {
@@ -620,7 +629,10 @@ code, pre {
 
 /* Responsive */
 @media (max-width: 768px) {
+  .dl-header { height: auto; min-height: var(--dl-header-height); padding: 0.75rem 0; }
   .dl-header-inner { flex-direction: column; gap: 0.75rem; height: auto; padding: 1rem 0; }
-  .dl-nav-links { flex-wrap: wrap; justify-content: center; gap: 0.75rem; }
+  .dl-brand-group { justify-content: center; width: 100%; }
+  .dl-nav-links { flex-wrap: wrap; justify-content: center; gap: 0.75rem; width: 100%; }
+  .dl-header-actions { justify-content: center; max-width: 100%; }
   .dl-modal { padding: 1.25rem; }
 }

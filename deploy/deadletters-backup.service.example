@@ -1,0 +1,66 @@
+# /etc/systemd/system/deadletters-backup.service
+#
+# Oneshot backup unit triggered by deadletters-backup.timer. It runs the same
+# dedicated account as the application so the SQLite database and runtime
+# directories remain readable. The HTTP server may be running or stopped.
+#
+# Placeholders:
+#   /opt/deadletters/scripts/backup.sh  installed executable script
+#   /etc/deadletters/deadletters.env    shared runtime and backup settings
+#   /var/lib/deadletters/backups        owner-only backup directory
+#
+# Set DEADLETTERS_BACKUP_DIR in the environment file if you do not want the
+# default /var/lib/deadletters/backups. Set
+# DEADLETTERS_BACKUP_AGE_RECIPIENT there to enable age encryption; keep the
+# matching age identity off this host and offline.
+
+[Unit]
+Description=Deadletters encrypted site snapshot backup
+Documentation=file:///opt/deadletters/docs/BACKUP.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deadletters
+Group=deadletters
+WorkingDirectory=/opt/deadletters
+EnvironmentFile=/etc/deadletters/deadletters.env
+Environment=DEADLETTERS_BACKUP_DIR=/var/lib/deadletters/backups
+ExecStart=/opt/deadletters/scripts/backup.sh
+UMask=0077
+TimeoutStartSec=15min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+# Create/write only the runtime state tree. The engine remains read-only.
+StateDirectory=deadletters
+StateDirectoryMode=0750
+ReadWritePaths=/var/lib/deadletters
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=deadletters-backup
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+RemoveIPC=true
+LimitNOFILE=4096

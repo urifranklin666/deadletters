@@ -1,0 +1,45 @@
+# /etc/caddy/Caddyfile
+#
+# Placeholders:
+#   deadletters.example.com  public DNS name
+#   ops@example.com          ACME account contact
+#   127.0.0.1:3000           Deadletters listener (HOST/PORT in the env file)
+#
+# Caddy obtains and renews TLS certificates automatically when ports 80 and 443
+# are reachable. Keep Deadletters bound to loopback and do not expose port 3000.
+#
+# In the Deadletters admin Settings, set site_url to
+# https://deadletters.example.com (no trailing slash) so canonical URLs, feeds,
+# sitemap entries, and discovery links use the public origin.
+#
+# Security headers: the application already sends CSP, X-Content-Type-Options,
+# X-Frame-Options, Referrer-Policy, Permissions-Policy, Cross-Origin-Opener-Policy,
+# and HSTS for non-local production/HTTPS-forwarded requests. Do not duplicate
+# them here. In particular, do not add a second Strict-Transport-Security header.
+
+{
+	email ops@example.com
+}
+
+deadletters.example.com {
+	encode zstd gzip
+
+	# Deadletters enforces 20 MiB for WXR imports and 25 MiB for media uploads.
+	# 26 MiB leaves room for multipart framing. The request_body directive is
+	# experimental in Caddy 2.10+; update Caddy rather than removing the cap.
+	request_body {
+		max_size 26MiB
+	}
+
+	reverse_proxy 127.0.0.1:3000 {
+		# Preserve the public Host and tell the app TLS was terminated upstream.
+		header_up Host {host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
+	}
+
+	# CORS is same-origin by default. Do not add Access-Control-Allow-Origin: *
+	# or set DEADLETTERS_CORS_ORIGINS to a wildcard. If a browser client on
+	# another origin truly needs API access, allow only that exact HTTPS origin.
+}

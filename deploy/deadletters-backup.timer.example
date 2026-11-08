@@ -1,0 +1,23 @@
+# /etc/systemd/system/deadletters-backup.timer
+#
+# Enable with:
+#   systemctl daemon-reload
+#   systemctl enable --now deadletters-backup.timer
+#
+# The timer runs in the host's local timezone. Change OnCalendar if the backup
+# window should follow UTC. Persistent=true catches up after downtime, and the
+# randomized delay avoids a thundering herd across hosts.
+
+[Unit]
+Description=Daily Deadletters site snapshot
+Documentation=file:///opt/deadletters/docs/BACKUP.md
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=30m
+AccuracySec=1m
+Persistent=true
+Unit=deadletters-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,6 +1,17 @@
 'use strict';
 
 const { test, expect } = require('@playwright/test');
+const { AxeBuilder } = require('@axe-core/playwright');
+
+async function expectNoSeriousAccessibilityViolations(page, label) {
+  const results = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa'])
+    .analyze();
+  const serious = results.violations.filter(violation => (
+    violation.impact === 'serious' || violation.impact === 'critical'
+  ));
+  expect(serious, `${label}: ${JSON.stringify(serious, null, 2)}`).toEqual([]);
+}
 
 test.describe.configure({ mode: 'serial' });
 
@@ -139,6 +150,71 @@ test('fresh install through publishing, moderation, federation, and authenticate
     expect(download.suggestedFilename()).toMatch(/^deadletters-engine-v.*\.zip$/);
     expect(dialogs).toEqual([]);
     await expect(page.getByText(/Engine distribution downloaded \(\d+ KB\)\./)).toBeVisible();
+  });
+
+  await test.step('scan public and administrative surfaces for serious accessibility violations', async () => {
+    await page.goto('/');
+    await expectNoSeriousAccessibilityViolations(page, 'public home');
+    await page.setViewportSize({ width: 390, height: 844 });
+    const overflowDetails = await page.evaluate(() => ({
+      amount: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      offenders: Array.from(document.querySelectorAll('body *'))
+        .map(element => ({
+          tag: element.tagName,
+          id: element.id,
+          className: typeof element.className === 'string' ? element.className : '',
+          right: Math.round(element.getBoundingClientRect().right),
+          width: Math.round(element.getBoundingClientRect().width)
+        }))
+        .filter(item => item.right > document.documentElement.clientWidth + 1)
+        .slice(0, 20)
+    }));
+    expect(overflowDetails.amount, JSON.stringify(overflowDetails.offenders)).toBeLessThanOrEqual(1);
+    await page.setViewportSize({ width: 1280, height: 800 });
+
+    await page.goto('/admin');
+    await expectNoSeriousAccessibilityViolations(page, 'admin dashboard');
+    await page.goto('/#/admin/comments');
+    await expectNoSeriousAccessibilityViolations(page, 'comment moderation');
+    await page.goto('/#/admin/federation');
+    await expectNoSeriousAccessibilityViolations(page, 'federation controls');
+    await page.goto('/#/admin/settings');
+    await expectNoSeriousAccessibilityViolations(page, 'settings');
+    await page.goto('/#/admin/editor');
+    await expectNoSeriousAccessibilityViolations(page, 'editor');
+    await page.goto('/#/admin/reshares');
+    await expectNoSeriousAccessibilityViolations(page, 're-letter hub');
+    await page.goto('/#/admin/media');
+    await expectNoSeriousAccessibilityViolations(page, 'media vault');
+    await page.goto('/#/admin/themes');
+    await expectNoSeriousAccessibilityViolations(page, 'theme studio');
+    await page.goto('/#/admin/addons');
+    await expectNoSeriousAccessibilityViolations(page, 'addons');
+    await page.goto('/#/admin/users');
+    await expectNoSeriousAccessibilityViolations(page, 'users');
+  });
+
+  await test.step('enforce operator landing and denied admin routes in the browser', async () => {
+    const created = await page.evaluate(async () => API.post('/api/v1/auth/users', {
+      login: 'e2eoperator',
+      email: 'operator@example.com',
+      password: 'operator-password-123',
+      displayName: 'E2E Operator',
+      role: 'operator'
+    }));
+    expect(created.message).toContain('commissioned');
+
+    await page.evaluate(() => API.setToken(null));
+    await page.goto('/admin');
+    await page.locator('#login-handle').fill('e2eoperator');
+    await page.locator('#login-password').fill('operator-password-123');
+    await page.locator('#admin-login-form button[type="submit"]').click();
+    await expect(page.getByRole('heading', { name: 'RESHARE & PROVENANCE HUB' })).toBeVisible();
+    await expect(page.locator('a[href="#/admin/federation"]')).toHaveCount(0);
+    await expect(page.locator('a[href="#/admin/editor"]')).toHaveCount(0);
+
+    await page.goto('/#/admin/federation');
+    await expect(page.getByText('ACCESS DENIED')).toBeVisible();
   });
 
   await test.step('report no runtime page or CSP errors', async () => {

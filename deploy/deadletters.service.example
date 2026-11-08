@@ -1,0 +1,77 @@
+# /etc/systemd/system/deadletters.service
+#
+# Install after copying the engine to /opt/deadletters and creating the
+# dedicated service account. See docs/DEPLOYMENT.md.
+#
+# Placeholders:
+#   deadletters        dedicated system user/group (no login shell)
+#   /opt/deadletters   read-only engine checkout/package
+#   /var/lib/deadletters  writable runtime state and backups
+#   /usr/bin/node      path from `command -v node` on the target host
+#   /etc/deadletters/deadletters.env  root:deadletters, mode 0640
+#
+# The environment file must set NODE_ENV=production, HOST=127.0.0.1,
+# PORT=3000, and the DEADLETTERS_* / DB_PATH runtime paths.
+
+[Unit]
+Description=Deadletters publishing engine
+Documentation=file:///opt/deadletters/docs/DEPLOYMENT.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deadletters
+Group=deadletters
+WorkingDirectory=/opt/deadletters
+EnvironmentFile=/etc/deadletters/deadletters.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /opt/deadletters/bin/deadletters.js start
+
+# The server handles SIGTERM once, stops accepting connections, closes SQLite,
+# and force-closes stalled connections after its internal 10 second timeout.
+KillSignal=SIGTERM
+TimeoutStopSec=20s
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=30s
+UMask=0077
+
+# StateDirectory creates /var/lib/deadletters owned by deadletters. The engine
+# itself stays read-only under /opt; only runtime state is writable.
+StateDirectory=deadletters
+StateDirectoryMode=0750
+ReadWritePaths=/var/lib/deadletters
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=deadletters
+
+# Conservative hardening. Do not add MemoryDenyWriteExecute: Node's JIT needs
+# executable memory. If an addon or native module needs another path or address
+# family, add the narrowest exception and document it rather than disabling all
+# sandboxing.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+RemoveIPC=true
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

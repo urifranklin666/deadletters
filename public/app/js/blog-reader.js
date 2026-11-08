@@ -63,7 +63,7 @@ const BlogReader = {
             </nav>
 
             <div class="dl-header-actions">
-              <select id="quick-theme-picker" class="dl-select dl-btn-sm" style="width: auto; padding: 0.3rem 0.6rem; font-family: var(--dl-font-mono); font-size: 0.72rem;">
+              <select id="quick-theme-picker" class="dl-select dl-btn-sm" aria-label="Preview installed theme" style="width: auto; padding: 0.3rem 0.6rem; font-family: var(--dl-font-mono); font-size: 0.72rem;">
                 <option value="deadplug-editorial" ${activeTheme === 'deadplug-editorial' ? 'selected' : ''}>DEADPLUG EDITORIAL</option>
                 <option value="monolith-cyberpunk" ${activeTheme === 'monolith-cyberpunk' ? 'selected' : ''}>MONOLITH MATRIX</option>
                 <option value="suisse-minimal" ${activeTheme === 'suisse-minimal' ? 'selected' : ''}>SUISSE MINIMAL</option>
@@ -170,7 +170,7 @@ const BlogReader = {
 
             <div style="display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--dl-border); padding-top: 1rem; margin-top: auto;">
               <div style="display: flex; align-items: center; gap: 8px;">
-                <img src="${escapeHtml(authorAvatar)}" style="width: 24px; height: 24px; border-radius: 50%;" />
+                <img src="${escapeHtml(authorAvatar)}" alt="" style="width: 24px; height: 24px; border-radius: 50%;" />
                 <span style="font-size: 0.75rem; font-weight: 600;">${escapeHtml(p.author_name || 'Operator')}</span>
               </div>
               <div style="display: flex; gap: 8px;">
@@ -241,7 +241,7 @@ const BlogReader = {
           </h1>
 
           <div style="display: flex; align-items: center; gap: 1rem; padding-bottom: 2rem; border-bottom: 1px solid var(--dl-border); margin-bottom: 2.5rem;">
-            <img src="${escapeHtml(authorAvatar)}" style="width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--dl-accent);" />
+            <img src="${escapeHtml(authorAvatar)}" alt="" style="width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--dl-accent);" />
             <div>
               <div style="font-weight: 700; font-size: 0.95rem;">${escapeHtml(post.author_name || 'Operator')}</div>
               <div style="font-family: var(--dl-font-mono); font-size: 0.75rem; color: var(--dl-text-muted);">${escapeHtml(post.author_bio || 'Deadplug Digital Atelier Operator')}</div>

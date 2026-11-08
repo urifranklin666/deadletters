@@ -28,38 +28,38 @@ const SettingsView = {
               <div class="dl-box-title">// CORE ENGINE OPTIONS</div>
 
               <div class="dl-form-group">
-                <label class="dl-label">Site / Atelier Title</label>
+                <label class="dl-label" for="set-title">Site / Atelier Title</label>
                 <input id="set-title" class="dl-input" type="text" value="${escapeHtml(settings.site_title)}" />
               </div>
 
               <div class="dl-form-group">
-                <label class="dl-label">Tagline / Transmission Header</label>
+                <label class="dl-label" for="set-tagline">Tagline / Transmission Header</label>
                 <input id="set-tagline" class="dl-input" type="text" value="${escapeHtml(settings.site_tagline)}" />
               </div>
 
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
                 <div class="dl-form-group">
-                  <label class="dl-label">Mesh Node Handle</label>
+                  <label class="dl-label" for="set-handle">Mesh Node Handle</label>
                   <input id="set-handle" class="dl-input" type="text" value="${escapeHtml(settings.site_node_handle)}" />
                 </div>
                 <div class="dl-form-group">
-                  <label class="dl-label">Canonical URL</label>
+                  <label class="dl-label" for="set-url">Canonical URL</label>
                   <input id="set-url" class="dl-input" type="text" value="${escapeHtml(settings.site_url)}" />
                 </div>
               </div>
 
               <div class="dl-form-group">
-                <label class="dl-label">Master Operator Email</label>
+                <label class="dl-label" for="set-email">Master Operator Email</label>
                 <input id="set-email" class="dl-input" type="email" value="${escapeHtml(settings.admin_email)}" />
               </div>
 
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
                 <div class="dl-form-group">
-                  <label class="dl-label">Dispatches Per Page</label>
+                  <label class="dl-label" for="set-per-page">Dispatches Per Page</label>
                   <input id="set-per-page" class="dl-input" type="number" min="1" max="100" value="${escapeHtml(settings.posts_per_page || '12')}" />
                 </div>
                 <div class="dl-form-group">
-                  <label class="dl-label">Front Page Displays</label>
+                  <label class="dl-label" for="set-front-page">Front Page Displays</label>
                   <select id="set-front-page" class="dl-select">
                     <option value="posts" ${settings.front_page_display === 'page' ? '' : 'selected'}>Published dispatches</option>
                     <option value="page" ${settings.front_page_display === 'page' ? 'selected' : ''}>One static page</option>
@@ -68,12 +68,12 @@ const SettingsView = {
               </div>
 
               <div class="dl-form-group">
-                <label class="dl-label">Static Front Page ID</label>
+                <label class="dl-label" for="set-page-on-front">Static Front Page ID</label>
                 <input id="set-page-on-front" class="dl-input" type="number" min="0" value="${escapeHtml(settings.page_on_front || 0)}" />
               </div>
 
               <div class="dl-form-group">
-                <label class="dl-label">Re-lettering</label>
+                <label class="dl-label" for="set-reshares">Re-lettering</label>
                 <select id="set-reshares" class="dl-select">
                   <option value="1" ${settings.reshares_enabled === '0' ? '' : 'selected'}>Enabled</option>
                   <option value="0" ${settings.reshares_enabled === '0' ? 'selected' : ''}>Disabled</option>
@@ -81,7 +81,7 @@ const SettingsView = {
               </div>
 
               <div class="dl-form-group">
-                <label class="dl-label">Permalink Structure</label>
+                <label class="dl-label" for="set-permalink">Permalink Structure</label>
                 <input id="set-permalink" class="dl-input" type="text" value="/letter/%postname%" readonly />
                 <div style="font-size: 0.72rem; color: var(--dl-text-muted); margin-top: 0.35rem; line-height: 1.5;">
                   The current router serves letters at /letter/&lt;slug&gt; and pages at /page/&lt;slug&gt;. Alternate permalink patterns are not implemented.
@@ -89,7 +89,7 @@ const SettingsView = {
               </div>
 
               <div class="dl-form-group">
-                <label class="dl-label">Discussion & Comment Moderation</label>
+                <label class="dl-label" for="set-comments">Discussion & Comment Moderation</label>
                 <select id="set-comments" class="dl-select">
                   <option value="1" ${settings.default_comment_approved === '1' ? 'selected' : ''}>Instant Broadcast (Open Discussion)</option>
                   <option value="0" ${settings.default_comment_approved === '0' ? 'selected' : ''}>Queue for Operator Clearance (Moderation)</option>

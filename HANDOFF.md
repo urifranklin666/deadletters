@@ -7,8 +7,8 @@ Date: 2026-11-08
 - Project root: `/run/media/deadplug/CODE/deadletters`
 - Public remote: `https://github.com/urifranklin666/deadletters.git`
 - Branch: `main`, tracking `origin/main`.
-- Base milestone commit: `b7b06b6` (`feat: harden publishing and add signed federation`), pushed to `origin/main`.
-- The latest key-rotation and Playwright/E2E changes are **uncommitted and unpushed**.
+- Base milestone commits pushed to `origin/main`: `b7b06b6` (hardening/federation) and `0d9e974` (key rotation/browser E2E).
+- The latest deployment/backup, accessibility, and expanded browser-test changes are **uncommitted and unpushed**.
 - The working tree contains additional intentional changes. **Do not run `git reset`, `git clean`, or discard changes.**
 - Runtime config was removed from Git tracking in the milestone commit; the local runtime file remains on disk and is ignored.
 - Local runtime secrets were rotated during this work. The local config and SQLite database are mode `0600`. The original public-repository JWT secret must still be treated as compromised because it remains in Git history.
@@ -21,9 +21,9 @@ Date: 2026-11-08
 Current verified state:
 
 ```text
-npm test                 -> 169 tests passed, 0 failed
-npm run check:syntax     -> 74 JavaScript files passed
-npm run test:e2e         -> 1 Chromium lifecycle passed
+npm test                 -> 174 passed, 1 skipped (optional age case), 0 failed
+npm run check:syntax     -> 75 JavaScript files passed
+npm run test:e2e         -> 1 Chromium lifecycle passed with axe/mobile/role checks
 git diff --check         -> clean
 ```
 
@@ -175,19 +175,22 @@ npm start
 - Role-aware admin landing/navigation and hidden unauthorized controls.
 - Accessible confirmation/modal patterns, focus trapping/Escape, responsive moderation/federation tables.
 - Honest addon metadata: compatibility markers and local license status only; no fake enterprise verification or peer relay claims.
-- Playwright Chromium lifecycle covers fresh install, canonical direct pages, signed public re-letter verification, anonymous comment and moderation, editor preview/publish sanitization, federation UI, authenticated ZIP download, and CSP/runtime-error assertions.
+- Playwright Chromium lifecycle covers fresh install, canonical direct pages, signed public re-letter verification, anonymous comment and moderation, editor preview/publish sanitization, federation UI, authenticated ZIP download, operator landing/denied-route behavior, mobile overflow, serious/critical axe WCAG A/AA scans across public and all admin surfaces, and CSP/runtime-error assertions.
 - Separate Browser E2E GitHub Actions workflow installs Chromium and retains traces/screenshots/reports on failure.
+- Accessibility pass fixed missing labels, image alternatives, focusable form names, and low-contrast faint text; responsive public header no longer overflows at 390px.
 - Node-key rotation archives retired public keys, keeps historical envelopes locally verifiable, exposes only the current key in discovery, and provides `rotate-node-key --reason`.
+- Production operations examples: hardened systemd app/backup units and daily timer, Caddy/nginx TLS reverse-proxy configs, env template, deployment/backup docs, and an executable backup script with owner-only output, optional age encryption, prefix-safe retention, and no-server snapshot creation.
+- Snapshot CLI accepts an optional output path for backup automation; existing default behavior is unchanged.
 
 ## 5. Remaining limitations and known gaps
 
 These are deliberate next steps, not defects hidden by the test suite.
 
-1. **Functional Chromium E2E exists, but visual regression and comprehensive accessibility automation do not.** Expand Playwright coverage for peer registration/outbox delivery, snapshot restore, role-specific admin flows, mobile layouts, and add screenshot/axe checks.
+1. **Functional Chromium E2E, mobile overflow, and serious/critical axe checks now exist.** Still missing: screenshot/visual regression baselines, complete axe coverage of every transient modal/state, two-node federation through the UI, snapshot restore through the browser, and broader role-specific workflows.
 2. **Node-key rotation is local-only, not revocation.** Rotation retains retired public keys for local historical verification and changes the current signing identity, but it cannot revoke copies of old private keys, notify peers automatically, re-sign or re-deliver old envelopes under the new identity, or make disclosed snapshots/backups safe. Peers must re-register the new public key out-of-band, and a compromised key remains compromised.
 3. **Federation remains delivery-only.** It does not auto-discover/fetch keys, ingest remote envelopes into the public blog, verify parents across nodes, retract content, or implement ActivityPub/general sync. Inbox is audit-only.
-4. **Snapshots contain private keys and config secrets and are unencrypted.** They are mode 0600 but must be protected like credential backups.
-5. **No deployment automation/scheduling.** No systemd unit, reverse-proxy config, TLS termination, backup schedule, retention, or off-site backup.
+4. **Snapshots contain private keys and config secrets and are unencrypted unless wrapped with age.** They are mode 0600 but must be protected like credential backups; the backup script adds optional age encryption and retention but not off-site replication.
+5. **Deployment and backup automation is example-based, not a managed layer.** Hardened systemd app/backup units, a daily timer, Caddy/nginx TLS reverse-proxy examples, an env template, deployment/backup docs, and an age-capable backup script now exist. Still missing: OS package/release automation, automatic off-site replication, monitoring integration, automated restore drills, and a tested HA/multi-writer design. Off-site copies, alerting, and recovery objectives remain operator responsibilities.
 6. **No performance/load benchmarks.** Avoid restoring cold-boot/high-traffic claims without measurements.
 7. **Addons execute trusted Node code.** Superadmin-only and reload cleanup exist, but there is no sandbox, permission manifest, async hook contract, or full compatibility layer.
 8. **Theme/custom CSS is trusted presentation state.** Uploaded files are strictly passive and client token values are pattern-checked, but arbitrary custom CSS from authorized editors is still powerful.
@@ -203,14 +206,14 @@ These are deliberate next steps, not defects hidden by the test suite.
 
 ### 1. Expand browser and accessibility coverage
 
-The baseline Playwright path now covers fresh install, seeded/canonical pages, public re-letter verification, anonymous comment/moderation, editor preview/publish sanitization, federation UI, and authenticated ZIP download. Extend it with:
+The baseline Playwright path now covers fresh install, seeded/canonical pages, public re-letter verification, anonymous comment/moderation, editor preview/publish sanitization, federation UI, authenticated ZIP download, operator landing/denied routes, 390px overflow, and serious/critical axe scans across public and administrative surfaces. Extend it with:
 
 - Two-node peer registration and outbox processing through browser controls.
-- Operator/author/art-director role-specific admin landings and denied routes.
-- Snapshot export plus restore smoke.
-- Mobile viewport and keyboard/focus checks.
-- Automated accessibility scanning and deliberate visual snapshots.
-- Download content validation, not just a successful Chromium download event.
+- Author/art-director role-specific workflows beyond the operator check.
+- Snapshot export plus restore smoke in the browser.
+- Keyboard/focus trapping checks for every modal and all transient states.
+- Screenshot/visual regression baselines.
+- Downloaded ZIP content validation, not just a successful browser download event.
 
 ### 2. Node identity rotation follow-ups
 
@@ -223,9 +226,9 @@ The baseline Playwright path now covers fresh install, seeded/canonical pages, p
 
 Either keep inbox as audit-only or design safe remote-content import/display with clear provenance labels, moderation, source trust, deletion/retraction, and parent-key handling. Do not silently turn signed remote payloads into normal local posts.
 
-### 4. Deployment and backup operations
+### 4. Deployment, backup, and monitoring follow-ups
 
-Add reviewed systemd/reverse-proxy/TLS examples, backup scheduling, restore drills, log rotation, health probes, and secret/env management. Document the exact supported Node LTS.
+Reviewed systemd/reverse-proxy/TLS examples, backup scheduling, an age-capable backup script, health probes, and secret/env guidance now live under `deploy/`, `scripts/backup.sh`, `docs/DEPLOYMENT.md`, and `docs/BACKUP.md`. Exact supported Node: `22.12.0+` (Node 22 LTS) with Node 24 LTS as the CI/recommended target. Still needed: package/release automation, automated off-site copy, external metrics/alerting integration, recurring automated restore drills, and an explicit journald/log-retention policy.
 
 ### 5. Performance claims
 
@@ -248,6 +251,7 @@ Benchmark cold boot, publication reads, feed generation, export/restore, and fed
 - Public shell/SEO: `src/core/public-shell.js`, `test/public-shell.test.js`
 - Database/migrations: `src/core/db.js`, `src/core/schema.js`, `src/core/migrations.js`
 - Export/restore: `src/core/exporter.js`, `test/exporter.test.js`
+- Backup/deploy operations: `scripts/backup.sh`, `test/backup-script.test.js`, `deploy/`, `docs/DEPLOYMENT.md`, `docs/BACKUP.md`
 - WXR: `src/core/wxr.js`, `test/wxr.test.js`
 - Operations: `src/server.js`, `test/operations.test.js`
 - Full app lifecycle: `test/app-integration.test.js`

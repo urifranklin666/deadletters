@@ -94,10 +94,24 @@ function handleZipExport() {
   console.log(`Location: ${res.zipPath}`);
 }
 
-async function handleSnapshotExport() {
+function parseSnapshotOutputPath(args) {
+  if (args.length === 0) return null;
+  if (args.length > 1) {
+    throw new Error('Usage: deadletters snapshot-zip [output.zip]');
+  }
+
+  const outputPath = args[0];
+  if (typeof outputPath !== 'string' || outputPath.length === 0 || outputPath.startsWith('-')) {
+    throw new Error('Usage: deadletters snapshot-zip [output.zip]');
+  }
+  return outputPath;
+}
+
+async function handleSnapshotExport(args) {
+  const outputPath = parseSnapshotOutputPath(args);
   printBanner();
   console.log('Creating a consistent Deadletters site snapshot...');
-  const snapshot = await packageSiteSnapshot();
+  const snapshot = await packageSiteSnapshot(outputPath);
   console.log(`✓ Site Snapshot created: ${snapshot.filename} (${(snapshot.sizeBytes / 1024).toFixed(1)} KB)`);
   console.log(`Location: ${snapshot.zipPath}`);
   console.log('Warning: data/config.json, when present, contains authentication secrets. Protect this archive.');
@@ -177,7 +191,9 @@ Commands:
   start               Start the Deadletters HTTP server
   install             Run the CLI setup wizard
   export-zip          Package the engine into a clean installable .zip
-  snapshot-zip        Export a consistent site snapshot (data + uploads + themes + addons)
+  snapshot-zip [output.zip]
+                      Export a consistent site snapshot (data + uploads + themes + addons)
+                      to the data directory or the given output path
   snapshot-restore <archive> <target-directory>
                       Restore into a new or empty directory without overwriting
   rotate-node-key --reason "..."
@@ -211,7 +227,7 @@ async function main() {
       handleZipExport();
       break;
     case 'snapshot-zip':
-      await handleSnapshotExport();
+      await handleSnapshotExport(args);
       break;
     case 'snapshot-restore':
       await handleSnapshotRestore(args);

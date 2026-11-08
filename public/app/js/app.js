@@ -352,7 +352,7 @@ const App = {
 
           <div class="dl-sidebar-footer">
             <div class="dl-operator-pill">
-              <img src="${escapeHtml(safeUrl(this.currentUser?.avatarUrl, '/uploads/deadplug_operator_avatar.jpg'))}" />
+              <img src="${escapeHtml(safeUrl(this.currentUser?.avatarUrl, '/uploads/deadplug_operator_avatar.jpg'))}" alt="" />
               <div class="dl-operator-details">
                 <span class="dl-operator-name">${escapeHtml(this.currentUser?.displayName || 'Operator')}</span>
                 <span class="dl-operator-role">${escapeHtml(this.currentUser?.role || 'operator')}</span>

@@ -1,0 +1,80 @@
+# /etc/nginx/sites-available/deadletters.conf
+#
+# Placeholders:
+#   deadletters.example.com  public DNS name
+#   /etc/letsencrypt/...     certificate paths from certbot or your CA
+#   127.0.0.1:3000           Deadletters listener (HOST/PORT in the env file)
+#
+# Enable with:
+#   ln -s /etc/nginx/sites-available/deadletters.conf /etc/nginx/sites-enabled/
+#   nginx -t && systemctl reload nginx
+#
+# Keep Deadletters bound to 127.0.0.1 and do not expose port 3000 in the firewall.
+# Set site_url in Deadletters admin Settings to https://deadletters.example.com
+# (no trailing slash) so canonical URLs, feeds, sitemap, and discovery links use
+# the public origin.
+
+upstream deadletters_backend {
+    server 127.0.0.1:3000;
+    keepalive 16;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name deadletters.example.com;
+
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    # nginx 1.25.1+ syntax. On older releases use
+    # "listen 443 ssl http2;" and remove this line.
+    http2 on;
+    server_name deadletters.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/deadletters.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/deadletters.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    server_tokens off;
+
+    # Deadletters enforces 20 MiB for WXR imports and 25 MiB for media uploads.
+    # 26m leaves room for multipart framing. Per-location values can be tighter
+    # if a future route needs a smaller cap.
+    client_max_body_size 26m;
+    client_body_timeout 60s;
+
+    location / {
+        proxy_pass http://deadletters_backend;
+        proxy_http_version 1.1;
+
+        # Preserve Host and tell the app TLS was terminated upstream. The app
+        # uses the forwarded proto marker for HSTS decisions.
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header Connection "";
+
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_buffering on;
+    }
+
+    # Security headers: Deadletters already sends CSP, X-Content-Type-Options,
+    # X-Frame-Options, Referrer-Policy, Permissions-Policy,
+    # Cross-Origin-Opener-Policy, and HSTS on non-local production/HTTPS-forwarded
+    # requests. Do not add duplicate add_header directives here; nginx would
+    # append a second header value instead of replacing the application's one.
+    #
+    # CORS remains same-origin. Never add Access-Control-Allow-Origin: * and do
+    # not configure a wildcard DEADLETTERS_CORS_ORIGINS value.
+}

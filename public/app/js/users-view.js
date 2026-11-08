@@ -42,7 +42,7 @@ const UsersView = {
                   <tr>
                     <td>
                       <div style="display: flex; align-items: center; gap: 10px;">
-                        <img src="${escapeHtml(safeUrl(u.avatar_url, '/uploads/deadplug_operator_avatar.jpg'))}" style="width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--dl-border-strong);" />
+                        <img src="${escapeHtml(safeUrl(u.avatar_url, '/uploads/deadplug_operator_avatar.jpg'))}" alt="" style="width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--dl-border-strong);" />
                         <div>
                           <div style="font-weight: 700; font-size: 0.92rem;">${escapeHtml(u.display_name)}</div>
                           <div style="font-size: 0.72rem; color: var(--dl-text-muted);">${escapeHtml(u.bio || '')}</div>

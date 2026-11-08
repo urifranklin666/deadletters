@@ -79,11 +79,11 @@ const EditorStudio = {
             </div>
 
             <!-- Title Input -->
-            <input id="post-title" class="dl-title-input" type="text" placeholder="DROP TRANSMISSION TITLE..." value="${escapeHtml(post.post_title)}" />
+            <input id="post-title" class="dl-title-input" type="text" aria-label="Letter title" placeholder="DROP TRANSMISSION TITLE..." value="${escapeHtml(post.post_title)}" />
 
             <!-- Content Area (Dual Mode) -->
             <div id="editor-body-wrap" style="position: relative;">
-              <textarea id="post-content" class="dl-content-textarea" placeholder="Compose editorial manifesto or markdown correspondence...">${escapeHtml(post.post_content)}</textarea>
+              <textarea id="post-content" class="dl-content-textarea" aria-label="Letter content" placeholder="Compose editorial manifesto or markdown correspondence...">${escapeHtml(post.post_content)}</textarea>
               <div id="post-preview" style="display: none; padding: 2rem; font-size: 1.1rem; line-height: 1.8; color: #dce0e8; min-height: 480px; background: var(--dl-obsidian);"></div>
             </div>
           </div>
@@ -94,7 +94,7 @@ const EditorStudio = {
             <div class="dl-sidebar-box">
               <div class="dl-box-title">// LETTER SPECS</div>
               <div class="dl-form-group">
-                <label class="dl-label">Publication Status</label>
+                <label class="dl-label" for="post-status">Publication Status</label>
                 <select id="post-status" class="dl-select">
                   <option value="publish" ${post.post_status === 'publish' ? 'selected' : ''}>Published (Active Frequency)</option>
                   <option value="draft" ${post.post_status === 'draft' ? 'selected' : ''}>Draft (Local Atelier Only)</option>
@@ -103,7 +103,7 @@ const EditorStudio = {
               </div>
 
               <div class="dl-form-group">
-                <label class="dl-label">Editorial Format</label>
+                <label class="dl-label" for="post-format">Editorial Format</label>
                 <select id="post-format" class="dl-select">
                   <option value="standard" ${post.content_format === 'standard' ? 'selected' : ''}>Standard Letter</option>
                   <option value="manifesto" ${post.content_format === 'manifesto' ? 'selected' : ''}>Manifesto Dispatch</option>
@@ -113,12 +113,12 @@ const EditorStudio = {
               </div>
 
               <div class="dl-form-group">
-                <label class="dl-label">Custom Slug</label>
+                <label class="dl-label" for="post-slug">Custom Slug</label>
                 <input id="post-slug" class="dl-input" type="text" placeholder="auto-generated-slug" value="${escapeHtml(post.post_name)}" />
               </div>
 
               <div class="dl-form-group">
-                <label class="dl-label">Editorial Excerpt / Abstract</label>
+                <label class="dl-label" for="post-excerpt">Editorial Excerpt / Abstract</label>
                 <textarea id="post-excerpt" class="dl-textarea" style="min-height: 80px;" placeholder="Brief synopsis for index and RSS feed...">${escapeHtml(post.post_excerpt)}</textarea>
               </div>
 
@@ -132,7 +132,7 @@ const EditorStudio = {
             <div class="dl-sidebar-box">
               <div class="dl-box-title">// FEATURED MEDIA</div>
               <div class="dl-form-group">
-                <label class="dl-label">Media Asset URL</label>
+                <label class="dl-label" for="post-featured-image">Media Asset URL</label>
                 <input id="post-featured-image" class="dl-input" type="text" placeholder="/uploads/image.jpg" value="${escapeHtml(post.featured_image || '')}" />
               </div>
               <div style="display: flex; gap: 0.5rem;">
@@ -140,7 +140,7 @@ const EditorStudio = {
                 <button id="btn-upload-media" class="dl-btn dl-btn-outline dl-btn-sm" style="width: 100%;">UPLOAD ASSET</button>
               </div>
               <div id="media-preview-box" style="margin-top: 1rem; ${featuredImageUrl ? '' : 'display: none;'}">
-                <img id="featured-preview" src="${escapeHtml(featuredImageUrl)}" style="width: 100%; height: 120px; object-fit: cover; border: 1px solid var(--dl-border);" />
+                <img id="featured-preview" src="${escapeHtml(featuredImageUrl)}" alt="Featured image preview" style="width: 100%; height: 120px; object-fit: cover; border: 1px solid var(--dl-border);" />
               </div>
             </div>
 

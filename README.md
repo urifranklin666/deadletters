@@ -16,6 +16,12 @@ This is an early, inspectable baseline—not a finished WordPress replacement or
 
 The Node.js server, CLI, addons, and repository scripts use **CommonJS** (`require` and `module.exports`), not ESM. The browser interface is plain JavaScript and CSS; there is no frontend build step.
 
+## Production deployment and backups
+
+Reviewed examples live in `deploy/`: a hardened systemd service, a daily backup service/timer, Caddy and nginx TLS reverse-proxy configurations, and an environment template. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the dedicated-user layout, permissions, firewall, upgrades/migrations, rollback, health checks, and federation key handling.
+
+[`docs/BACKUP.md`](docs/BACKUP.md) documents scheduled snapshots, age encryption, retention, off-site copies, restore-to-new-directory drills, and monitoring. [`scripts/backup.sh`](scripts/backup.sh) runs the existing consistent site snapshot without needing the HTTP server to be running; it applies owner-only permissions, supports optional age encryption, and prunes only matching old archives. Example systemd, reverse-proxy, and backup automation is starting material, not a hosted control plane or a backup guarantee.
+
 ## Setup
 
 1. Clone the public repository and install the locked dependencies:
@@ -93,7 +99,7 @@ Configuration is read from environment variables and, where noted, the installer
 | `DEADLETTERS_THEMES_DIR` | `src/themes` | Installed themes directory. |
 | `DEADLETTERS_ADDONS_DIR` | `src/addons` | Installed addons directory. |
 
-The installer stores installation metadata, host, port, JWT secret, and legacy provenance secret in `<DEADLETTERS_DATA_DIR>/config.json`. Editorial settings and content are stored in SQLite. The SQLite database also contains the node's Ed25519 private key, and local database files are set to owner-only permissions where the platform supports them. Keep runtime data private and set `HOST`, `PORT`, and the saved public site URL deliberately when deploying behind a proxy or on a public interface. `config.json` and complete site snapshots therefore contain credentials and must be protected even though the engine ZIP does not include them. Authentication tokens use the configured bearer-only flow with `issuer` and `audience` validation; changing a user's password increments a token version and invalidates older tokens. There is no production deployment automation in this baseline.
+The installer stores installation metadata, host, port, JWT secret, and legacy provenance secret in `<DEADLETTERS_DATA_DIR>/config.json`. Editorial settings and content are stored in SQLite. The SQLite database also contains the node's Ed25519 private key, and local database files are set to owner-only permissions where the platform supports them. Keep runtime data private and set `HOST`, `PORT`, and the saved public site URL deliberately when deploying behind a proxy or on a public interface. `config.json` and complete site snapshots therefore contain credentials and must be protected even though the engine ZIP does not include them. Authentication tokens use the configured bearer-only flow with `issuer` and `audience` validation; changing a user's password increments a token version and invalidates older tokens. Reviewed deployment examples and a backup wrapper are provided under `deploy/` and `scripts/`; they remain operator-managed examples, not a hosted deployment service.
 
 ### Settings visibility and supported values
 
@@ -114,16 +120,19 @@ npm run export-zip
 
 The engine ZIP is built from an explicit source-file allowlist. It includes `package.json`, `package-lock.json`, the startup/API/core code, browser assets, bundled themes/addons, and three explicitly named demo images. It does **not** include `src/content`, saved `config.json` files, databases or WAL/SHM files, other user uploads, runtime themes/addons outside the bundled source list, tests, temporary files, generated archives, `node_modules`, `.git`, or environment files. The allowlist must be updated deliberately when new runtime source files are added.
 
-To install an extracted engine archive, run `node install.js` from its root. The bootstrap runs `npm ci --omit=dev`, exits with an error if dependency installation fails, and then calls `startServer()`. Dependency installation still requires npm, network access or a populated npm cache, and a platform supported by the locked native SQLite dependency. The ZIP does not bundle dependencies.
+To install an extracted engine archive, run `node install.js` from its root. The bootstrap runs `npm ci --omit=dev`, exits with an error if dependency installation fails, and then calls `startServer()`. Dependency installation still requires npm, network access or a populated npm cache, and a platform supported by the locked native SQLite dependency. The ZIP does not bundle dependencies, `deploy/`, `docs/`, or `scripts/backup.sh`; copy those repository files alongside an extracted archive when using the deployment and backup examples.
 
 ### Snapshot creation
 
 ```bash
 npm run snapshot-zip
 # or: node bin/deadletters.js snapshot-zip
+# or: node bin/deadletters.js snapshot-zip /path/to/snapshot.zip
 ```
 
-Snapshot creation awaits the `better-sqlite3` online backup API instead of copying a live database and its WAL/SHM files. The resulting ZIP uses this layout:
+The optional output path is intended for backup automation; the CLI rejects
+extra arguments and option-like paths. Snapshot creation awaits the
+`better-sqlite3` online backup API instead of copying a live database and its WAL/SHM files. The resulting ZIP uses this layout:
 
 ```text
 data/deadletters.db
@@ -135,7 +144,7 @@ addons/
 
 Old ZIPs, temporary files/directories, SQLite sidecars, VCS/dependency directories, symlinks, and special files are not packaged from asset directories. The SQLite backup is transactionally consistent; asset files are read individually, so a snapshot is not an atomic filesystem-wide freeze while uploads or themes are being edited.
 
-**Snapshots are sensitive, unencrypted files.** In particular, `data/config.json` can contain the JWT and legacy provenance secrets as well as deployment settings, and `data/deadletters.db` contains the node's Ed25519 **private key**. Anyone with a snapshot can sign re-letters as this node and read all of its content. Snapshot output is set to owner-only permissions (`0600`) on POSIX systems; preserve restrictive permissions when copying it. Protect snapshot archives like a database credential backup and rotate secrets if an archive is disclosed. A snapshot made before a node-key rotation still contains the old private key, so rotating the live key does not make that archive safe. There is no scheduling, encryption, off-site upload, retention management, or hosted backup service here.
+**Snapshots are sensitive files and are unencrypted unless you use the age option in the backup script.** In particular, `data/config.json` can contain the JWT and legacy provenance secrets as well as deployment settings, and `data/deadletters.db` contains the node's Ed25519 **private key**. Anyone with a snapshot can sign re-letters as this node and read all of its content. Snapshot output is set to owner-only permissions (`0600`) on POSIX systems; preserve restrictive permissions when copying it. Protect snapshot archives like a database credential backup and rotate secrets if an archive is disclosed. A snapshot made before a node-key rotation still contains the old private key, so rotating the live key does not make that archive safe. For scheduled, owner-only backups with optional age encryption, safe retention, and restore drills, use [`scripts/backup.sh`](scripts/backup.sh) and [`docs/BACKUP.md`](docs/BACKUP.md). Off-site replication, monitoring, and hosted backup service remain operator responsibilities.
 
 ### Non-destructive snapshot restore
 
@@ -315,8 +324,8 @@ npm run test:e2e
 ```
 
 - `check:syntax` recursively runs Node's syntax checker over project `.js`, `.cjs`, and `.mjs` files. It skips dependency/VCS directories, generated build/export/log directories, and runtime data/upload directories.
-- `test` runs Node's built-in `node --test` runner. The suite includes unit, route/application integration, archive-security, export/snapshot/restore, WXR namespace/entity/rollback/round-trip/upload-limit, provenance/tamper, key-rotation, operations, static-asset, and two-node federation tests. Database tests use temporary runtime directories and close their SQLite connections.
-- `test:e2e` runs Playwright Chromium against a fresh isolated node. It drives the end-to-end browser lifecycle: install wizard, seeded direct/canonical pages, public signed re-letter verification, anonymous comment plus moderation, editor preview/publish sanitization, federation control surface, and an authenticated engine ZIP download. It also fails on runtime page errors or CSP violations. Browser binaries are not committed.
+- `test` runs Node's built-in `node --test` runner. The suite includes unit, route/application integration, archive-security, export/snapshot/restore, backup-script encryption/retention integration, WXR namespace/entity/rollback/round-trip/upload-limit, provenance/tamper, key-rotation, operations, static-asset, and two-node federation tests. Database tests use temporary runtime directories and close their SQLite connections. The optional age encryption case runs only when `age` and `age-keygen` are installed.
+- `test:e2e` runs Playwright Chromium against a fresh isolated node. It drives the end-to-end browser lifecycle: install wizard, seeded direct/canonical pages, public signed re-letter verification, anonymous comment plus moderation, editor preview/publish sanitization, federation control surface, authenticated engine ZIP download, operator landing/denied-route behavior, and mobile overflow. It runs axe accessibility checks for serious/critical WCAG A/AA violations across the public page and all admin surfaces, and fails on runtime page errors or CSP violations. Browser binaries are not committed.
 
 GitHub Actions runs `npm ci`, syntax, and unit/integration tests on Node.js 24 in `.github/workflows/ci.yml`. A separate `.github/workflows/e2e.yml` installs Chromium with dependencies and runs the browser suite, retaining traces/screenshots on failure.
 
@@ -327,6 +336,7 @@ node bin/deadletters.js start         # Start the HTTP server
 node bin/deadletters.js install       # Run the interactive terminal installer
 node bin/deadletters.js export-zip    # Create an engine archive in the data directory
 node bin/deadletters.js snapshot-zip  # Create a site snapshot in the data directory
+node bin/deadletters.js snapshot-zip /path/to/snapshot.zip  # Optional output path
 node bin/deadletters.js snapshot-restore <archive> <target-directory>
 node bin/deadletters.js help          # Show CLI help
 ```

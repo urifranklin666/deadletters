@@ -49,7 +49,7 @@ const MediaVault = {
             ` : media.map(m => `
               <div class="dl-media-card">
                 ${m.isImage ? `
-                  <img src="${escapeHtml(safeUrl(m.url))}" class="dl-media-thumb" loading="lazy" />
+                  <img src="${escapeHtml(safeUrl(m.url))}" alt="${escapeHtml(m.filename || 'Media asset')}" class="dl-media-thumb" loading="lazy" />
                 ` : `
                   <div class="dl-media-thumb" style="display: flex; align-items: center; justify-content: center; font-family: var(--dl-font-mono); font-size: 0.8rem; color: var(--dl-text-muted);">
                     FILE ASSET

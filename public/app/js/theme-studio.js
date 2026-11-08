@@ -35,7 +35,7 @@ const ThemeStudio = {
           <div class="dl-themes-grid">
             ${themes.map(t => `
               <div class="dl-theme-card ${t.isActive ? 'active' : ''}">
-                <img src="${escapeHtml(safeUrl(t.preview_image, '/uploads/deadplug_editorial_cover.jpg'))}" class="dl-theme-preview" />
+                <img src="${escapeHtml(safeUrl(t.preview_image, '/uploads/deadplug_editorial_cover.jpg'))}" alt="${escapeHtml(`${t.name || t.slug} theme preview`)}" class="dl-theme-preview" />
                 <div class="dl-theme-body">
                   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
                     <div class="dl-theme-name">${escapeHtml(t.name)}</div>
@@ -66,10 +66,10 @@ const ThemeStudio = {
               <div>
                 <!-- Accent Color Picker -->
                 <div class="dl-form-group">
-                  <label class="dl-label">Accent Brand Color</label>
+                  <label class="dl-label" for="token-accent-color">Accent Brand Color</label>
                   <div style="display: flex; gap: 0.75rem; align-items: center;">
                     <input type="color" id="token-accent-color" value="${escapeHtml(tokens.accent_color || '#D6FF00')}" style="width: 50px; height: 38px; border: 1px solid var(--dl-border); background: transparent; cursor: pointer;" />
-                    <input type="text" id="token-accent-hex" class="dl-input" value="${escapeHtml(tokens.accent_color || '#D6FF00')}" style="width: 140px; font-family: var(--dl-font-mono);" />
+                    <input type="text" id="token-accent-hex" class="dl-input" aria-label="Accent color hex value" value="${escapeHtml(tokens.accent_color || '#D6FF00')}" style="width: 140px; font-family: var(--dl-font-mono);" />
                     <!-- Preset swatches -->
                     <div style="display: flex; gap: 6px;">
                       <span class="color-swatch" data-hex="#D6FF00" style="width: 24px; height: 24px; background: #D6FF00; cursor: pointer; border: 1px solid #333;" title="Acid Lime"></span>
@@ -83,13 +83,13 @@ const ThemeStudio = {
 
                 <!-- Border Radius -->
                 <div class="dl-form-group">
-                  <label class="dl-label">Border Radius: <span id="radius-val">${escapeHtml(tokens.border_radius || '0px')}</span></label>
+                  <label class="dl-label" for="token-radius">Border Radius: <span id="radius-val">${escapeHtml(tokens.border_radius || '0px')}</span></label>
                   <input type="range" id="token-radius" min="0" max="16" step="2" value="${escapeHtml(parseInt(tokens.border_radius || '0', 10))}" style="accent-color: var(--dl-accent); width: 100%;" />
                 </div>
 
                 <!-- Font Heading -->
                 <div class="dl-form-group">
-                  <label class="dl-label">Editorial Heading Typography</label>
+                  <label class="dl-label" for="token-font-heading">Editorial Heading Typography</label>
                   <select id="token-font-heading" class="dl-select">
                     <option value="'Syne', sans-serif">Syne (High-Fashion Avant-Garde)</option>
                     <option value="'Instrument Serif', Georgia, serif">Instrument Serif (Luxury Editorial)</option>
@@ -102,7 +102,7 @@ const ThemeStudio = {
               <!-- Custom CSS Injection -->
               <div>
                 <div class="dl-form-group">
-                  <label class="dl-label">Custom CSS Overrides</label>
+                  <label class="dl-label" for="token-custom-css">Custom CSS Overrides</label>
                   <textarea id="token-custom-css" class="dl-textarea" style="font-family: var(--dl-font-mono); font-size: 0.8rem; min-height: 180px;" placeholder="/* Custom CSS injected directly into atelier frontend */">${escapeHtml(active.customCss || '')}</textarea>
                 </div>
               </div>

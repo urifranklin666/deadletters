@@ -93,7 +93,7 @@ const ReshareHub = {
               <article class="dl-reshare-card">
                 <div class="dl-reshare-header">
                   <div class="dl-curator-info">
-                    <img src="${escapeHtml(safeUrl(r.curator_avatar, '/uploads/deadplug_operator_avatar.jpg'))}" class="dl-avatar" />
+                    <img src="${escapeHtml(safeUrl(r.curator_avatar, '/uploads/deadplug_operator_avatar.jpg'))}" alt="" class="dl-avatar" />
                     <div>
                       <div class="dl-curator-name">${escapeHtml(r.curator_name || 'Operator')}</div>
                       <div class="dl-curator-node">// RE-LETTERED ON ${escapeHtml(new Date(r.created_at).toLocaleDateString())}</div>
