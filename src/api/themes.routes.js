@@ -6,14 +6,74 @@ const multer = require('multer');
 const config = require('../config');
 const { getDb, getOption, updateOption } = require('../core/db');
 const { requireAuth } = require('../core/auth');
+const { CAPABILITIES, requireCapability } = require('../core/capabilities');
 const hooks = require('../core/hooks');
+const {
+  ARCHIVE_UPLOAD_FILE_SIZE,
+  ArchiveSecurityError,
+  validateArchiveEntries,
+  readArchiveManifest,
+  resolveContainedPath,
+  resolveInstallDestination
+} = require('../core/archive-security');
 
 const router = express.Router();
-const upload = multer({ dest: path.join(config.dataDir, 'temp_uploads') });
+const THEME_SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const THEME_ASSET_EXTENSIONS = new Set([
+  '.css', '.json', '.png', '.jpg', '.jpeg', '.webp', '.gif',
+  '.woff', '.woff2', '.ttf', '.otf'
+]);
+const upload = multer({
+  dest: path.join(config.dataDir, 'temp_uploads'),
+  limits: { fileSize: ARCHIVE_UPLOAD_FILE_SIZE, files: 1, fields: 0, parts: 1 }
+});
+
+function validThemeSlug(slug) {
+  return typeof slug === 'string' && THEME_SLUG_PATTERN.test(slug);
+}
+
+function ensureSafeThemeAssets(zipEntries) {
+  for (const entry of zipEntries) {
+    if (entry.isDirectory) continue;
+    const extension = path.posix.extname(entry.entryName.replace(/\\/g, '/')).toLowerCase();
+    if (!THEME_ASSET_EXTENSIONS.has(extension)) {
+      throw new ArchiveSecurityError(
+        `theme packages may contain only CSS, JSON, raster images, and font assets; rejected "${entry.entryName}".`
+      );
+    }
+  }
+}
+
+function cleanupUploadedFile(filePath) {
+  if (!filePath) return;
+  try {
+    fs.unlinkSync(filePath);
+  } catch (error) {
+    if (error.code !== 'ENOENT') console.warn('[Themes API] Unable to clean temporary upload:', error.message);
+  }
+}
+
+function cleanupInstalledDirectory(directory) {
+  if (!directory) return;
+  try {
+    fs.rmSync(directory, { recursive: true, force: true });
+  } catch (error) {
+    console.warn('[Themes API] Unable to roll back incomplete installation:', error.message);
+  }
+}
+
+function themeUploadMiddleware(req, res, next) {
+  upload.single('theme_zip')(req, res, error => {
+    if (!error) return next();
+    cleanupUploadedFile(req.file?.path);
+    res.status(400).json({ error: `Theme upload rejected: ${error.message}` });
+  });
+}
 
 // GET /api/v1/themes
 router.get('/', (req, res) => {
-  const activeSlug = getOption('active_theme', 'deadplug-editorial');
+  const configuredSlug = getOption('active_theme', 'deadplug-editorial');
+  const activeSlug = validThemeSlug(configuredSlug) ? configuredSlug : 'deadplug-editorial';
   const themes = [];
 
   if (fs.existsSync(config.themesDir)) {
@@ -41,7 +101,8 @@ router.get('/', (req, res) => {
 // GET /api/v1/themes/active
 router.get('/active', (req, res) => {
   const db = getDb();
-  const activeSlug = getOption('active_theme', 'deadplug-editorial');
+  const configuredSlug = getOption('active_theme', 'deadplug-editorial');
+  const activeSlug = validThemeSlug(configuredSlug) ? configuredSlug : 'deadplug-editorial';
   const jsonPath = path.join(config.themesDir, activeSlug, 'theme.json');
   let meta = { slug: activeSlug, name: activeSlug, defaults: {} };
 
@@ -71,10 +132,26 @@ router.get('/active', (req, res) => {
   });
 });
 
+// GET /api/v1/themes/active/style.css
+router.get('/active/style.css', (req, res) => {
+  const activeSlug = getOption('active_theme', 'deadplug-editorial');
+  if (!validThemeSlug(activeSlug)) {
+    return res.status(404).type('text/plain').send('Active theme is invalid.');
+  }
+
+  const stylesheet = path.join(config.themesDir, activeSlug, 'style.css');
+  if (!fs.existsSync(stylesheet)) {
+    return res.status(404).type('text/plain').send('Active theme stylesheet not found.');
+  }
+
+  res.set('Cache-Control', 'no-cache');
+  res.type('text/css').send(fs.readFileSync(stylesheet, 'utf8'));
+});
+
 // POST /api/v1/themes/activate
-router.post('/activate', requireAuth, (req, res) => {
+router.post('/activate', requireAuth, requireCapability(CAPABILITIES.THEMES_MANAGE), (req, res) => {
   const { slug } = req.body;
-  if (!slug) return res.status(400).json({ error: 'Theme slug required.' });
+  if (!validThemeSlug(slug)) return res.status(400).json({ error: 'A valid theme slug is required.' });
 
   const themeDir = path.join(config.themesDir, slug);
   if (!fs.existsSync(themeDir)) {
@@ -89,6 +166,7 @@ router.post('/activate', requireAuth, (req, res) => {
 
 // GET /api/v1/themes/tokens/:themeSlug
 router.get('/tokens/:themeSlug', (req, res) => {
+  if (!validThemeSlug(req.params.themeSlug)) return res.status(400).json({ error: 'Invalid theme slug.' });
   const db = getDb();
   const row = db.prepare('SELECT tokens_json, custom_css FROM dl_theme_tokens WHERE theme_slug = ?').get(req.params.themeSlug);
   if (!row) {
@@ -101,9 +179,10 @@ router.get('/tokens/:themeSlug', (req, res) => {
 });
 
 // POST /api/v1/themes/tokens/:themeSlug (Save Theme Studio Customizer)
-router.post('/tokens/:themeSlug', requireAuth, (req, res) => {
+router.post('/tokens/:themeSlug', requireAuth, requireCapability(CAPABILITIES.THEMES_MANAGE), (req, res) => {
   const db = getDb();
   const slug = req.params.themeSlug;
+  if (!validThemeSlug(slug)) return res.status(400).json({ error: 'Invalid theme slug.' });
   const { tokens, customCss = '' } = req.body;
 
   const tokensStr = JSON.stringify(tokens || {});
@@ -119,35 +198,67 @@ router.post('/tokens/:themeSlug', requireAuth, (req, res) => {
 });
 
 // POST /api/v1/themes/upload-zip (Theme Installer)
-router.post('/upload-zip', requireAuth, upload.single('theme_zip'), (req, res) => {
+router.post('/upload-zip', requireAuth, requireCapability(CAPABILITIES.THEMES_MANAGE), themeUploadMiddleware, (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No theme zip file provided.' });
   }
 
-  try {
-    const zip = new AdmZip(req.file.path);
-    const zipEntries = zip.getEntries();
-    let themeJsonEntry = zipEntries.find(e => e.entryName.endsWith('theme.json'));
+  const temporaryPath = req.file.path;
+  let destDir = null;
+  let createdDestination = false;
 
-    if (!themeJsonEntry) {
-      fs.unlinkSync(req.file.path);
-      return res.status(400).json({ error: 'Invalid theme bundle: missing theme.json manifest.' });
+  try {
+    let zip;
+    let zipEntries;
+    try {
+      zip = new AdmZip(temporaryPath);
+      zipEntries = zip.getEntries();
+    } catch {
+      throw new ArchiveSecurityError('invalid or unsupported ZIP archive.');
     }
 
-    const themeMeta = JSON.parse(themeJsonEntry.getData().toString('utf8'));
-    const slug = themeMeta.slug || path.basename(req.file.originalname, '.zip').toLowerCase().replace(/[^a-z0-9_-]/g, '');
-    const destDir = path.join(config.themesDir, slug);
+    validateArchiveEntries(zipEntries);
+    ensureSafeThemeAssets(zipEntries);
+    const themeMeta = readArchiveManifest(zipEntries, 'theme.json');
+    const slug = themeMeta.slug;
+    if (!validThemeSlug(slug)) throw new ArchiveSecurityError('theme.json has an invalid slug.');
+    destDir = resolveInstallDestination(config.themesDir, slug);
 
-    zip.extractAllTo(destDir, true);
-    fs.unlinkSync(req.file.path);
+    for (const entry of zipEntries) {
+      resolveContainedPath(destDir, entry.entryName);
+    }
+
+    if (fs.existsSync(destDir)) {
+      return res.status(409).json({ error: `Theme "${slug}" is already installed.` });
+    }
+    if (!zip.test()) {
+      throw new ArchiveSecurityError('archive contents are corrupt, encrypted, or unsupported.');
+    }
+
+    try {
+      fs.mkdirSync(destDir, { recursive: false });
+      createdDestination = true;
+    } catch (error) {
+      if (error.code === 'EEXIST') {
+        return res.status(409).json({ error: `Theme "${slug}" is already installed.` });
+      }
+      throw error;
+    }
+
+    zip.extractAllTo(destDir, false, false);
 
     res.status(201).json({
-      message: `Theme "${themeMeta.name || slug}" successfully installed into atelier.`,
+      message: `Theme "${typeof themeMeta.name === 'string' && themeMeta.name ? themeMeta.name : slug}" successfully installed into atelier.`,
       slug
     });
   } catch (err) {
-    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    if (createdDestination) cleanupInstalledDirectory(destDir);
+    if (err instanceof ArchiveSecurityError) {
+      return res.status(400).json({ error: 'Invalid theme bundle: ' + err.message });
+    }
     res.status(500).json({ error: 'Failed to extract theme zip: ' + err.message });
+  } finally {
+    cleanupUploadedFile(temporaryPath);
   }
 });
 

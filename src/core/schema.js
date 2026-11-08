@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS dl_users (
   user_status INTEGER DEFAULT 0,
   display_name TEXT,
   role TEXT DEFAULT 'operator',
+  token_version INTEGER NOT NULL DEFAULT 0,
   avatar_url TEXT,
   bio TEXT
 );
@@ -133,8 +134,81 @@ CREATE TABLE IF NOT EXISTS dl_reshares (
   signature TEXT,
   reshare_count INTEGER DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  envelope_json TEXT,
+  envelope_hash TEXT,
+  envelope_signature TEXT,
+  signature_algorithm TEXT,
+  signing_key_id TEXT,
+  parent_envelope_hash TEXT,
+  signed_at TEXT,
   FOREIGN KEY (post_id) REFERENCES dl_posts(ID) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS dl_node_identity (
+  identity_id INTEGER PRIMARY KEY CHECK (identity_id = 1),
+  node_handle TEXT NOT NULL,
+  public_key_der TEXT NOT NULL,
+  private_key_der TEXT NOT NULL,
+  key_id TEXT NOT NULL UNIQUE,
+  algorithm TEXT NOT NULL DEFAULT 'Ed25519',
+  created_at TEXT NOT NULL
+);
+
+-- Delivery-only federation MVP. Peers are explicitly trusted by a superadmin;
+-- public keys are never fetched automatically from remote endpoints.
+CREATE TABLE IF NOT EXISTS dl_federation_peers (
+  peer_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  endpoint_url TEXT NOT NULL UNIQUE,
+  node_handle TEXT NOT NULL,
+  public_key_der TEXT NOT NULL,
+  key_id TEXT NOT NULL UNIQUE,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS dl_federation_outbox (
+  outbox_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  delivery_id TEXT NOT NULL UNIQUE,
+  peer_id INTEGER NOT NULL,
+  envelope_hash TEXT NOT NULL,
+  reshare_id INTEGER,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'delivered', 'failed', 'dead')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT NOT NULL,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (peer_id, envelope_hash),
+  FOREIGN KEY (peer_id) REFERENCES dl_federation_peers(peer_id) ON DELETE CASCADE,
+  FOREIGN KEY (reshare_id) REFERENCES dl_reshares(reshare_id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS dl_federation_inbox (
+  inbox_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  delivery_id TEXT UNIQUE,
+  source_peer_id INTEGER,
+  source_node TEXT,
+  key_id TEXT,
+  envelope_hash TEXT,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('accepted', 'rejected')),
+  reason TEXT,
+  received_at TEXT NOT NULL,
+  FOREIGN KEY (source_peer_id) REFERENCES dl_federation_peers(peer_id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_federation_peers_enabled ON dl_federation_peers(enabled);
+CREATE INDEX IF NOT EXISTS idx_federation_outbox_peer ON dl_federation_outbox(peer_id);
+CREATE INDEX IF NOT EXISTS idx_federation_outbox_due ON dl_federation_outbox(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_federation_outbox_envelope ON dl_federation_outbox(envelope_hash);
+CREATE INDEX IF NOT EXISTS idx_federation_inbox_peer ON dl_federation_inbox(source_peer_id);
+CREATE INDEX IF NOT EXISTS idx_federation_inbox_envelope ON dl_federation_inbox(envelope_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_federation_inbox_accepted_envelope
+  ON dl_federation_inbox(envelope_hash)
+  WHERE status = 'accepted' AND envelope_hash IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS dl_addons (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

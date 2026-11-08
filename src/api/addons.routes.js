@@ -6,13 +6,55 @@ const multer = require('multer');
 const config = require('../config');
 const { getDb } = require('../core/db');
 const { requireAuth } = require('../core/auth');
+const { CAPABILITIES, requireCapability } = require('../core/capabilities');
 const hooks = require('../core/hooks');
+const {
+  ARCHIVE_UPLOAD_FILE_SIZE,
+  ArchiveSecurityError,
+  validateArchiveEntries,
+  readArchiveManifest,
+  resolveContainedPath,
+  resolveInstallDestination
+} = require('../core/archive-security');
 
 const router = express.Router();
-const upload = multer({ dest: path.join(config.dataDir, 'temp_uploads') });
+const loadedAddonSlugs = new Set();
+const upload = multer({
+  dest: path.join(config.dataDir, 'temp_uploads'),
+  limits: { fileSize: ARCHIVE_UPLOAD_FILE_SIZE, files: 1, fields: 0, parts: 1 }
+});
+
+function cleanupUploadedFile(filePath) {
+  if (!filePath) return;
+  try {
+    fs.unlinkSync(filePath);
+  } catch (error) {
+    if (error.code !== 'ENOENT') console.warn('[Addons API] Unable to clean temporary upload:', error.message);
+  }
+}
+
+function cleanupInstalledDirectory(directory) {
+  if (!directory) return;
+  try {
+    fs.rmSync(directory, { recursive: true, force: true });
+  } catch (error) {
+    console.warn('[Addons API] Unable to roll back incomplete installation:', error.message);
+  }
+}
+
+function addonUploadMiddleware(req, res, next) {
+  upload.single('addon_zip')(req, res, error => {
+    if (!error) return next();
+    cleanupUploadedFile(req.file?.path);
+    res.status(400).json({ error: `Addon upload rejected: ${error.message}` });
+  });
+}
 
 // Load Addon Modules into runtime
 function loadAddonsIntoRuntime() {
+  for (const slug of loadedAddonSlugs) hooks.removeAddon(slug);
+  loadedAddonSlugs.clear();
+
   const db = getDb();
   if (!fs.existsSync(config.addonsDir)) return;
 
@@ -46,6 +88,7 @@ function loadAddonsIntoRuntime() {
               config
             };
             addonFn(hooks, context);
+            loadedAddonSlugs.add(slug);
             console.log(`[Addons Engine] Activated "${meta.name}" (${slug})`);
           }
         }
@@ -56,8 +99,17 @@ function loadAddonsIntoRuntime() {
   });
 }
 
+function sanitizeAddonManifest(meta = {}) {
+  const publicFields = ['name', 'version', 'description', 'author'];
+  return Object.fromEntries(
+    publicFields
+      .filter(field => meta[field] !== undefined)
+      .map(field => [field, meta[field]])
+  );
+}
+
 // GET /api/v1/addons
-router.get('/', (req, res) => {
+router.get('/', requireAuth, requireCapability(CAPABILITIES.ADDONS_MANAGE), (req, res) => {
   const db = getDb();
   const addons = [];
 
@@ -68,9 +120,9 @@ router.get('/', (req, res) => {
       if (fs.existsSync(jsonPath)) {
         try {
           const meta = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-          const dbRow = db.prepare('SELECT is_active, settings FROM dl_addons WHERE slug = ?').get(slug);
+          const dbRow = db.prepare('SELECT is_active FROM dl_addons WHERE slug = ?').get(slug);
           addons.push({
-            ...meta,
+            ...sanitizeAddonManifest(meta),
             slug,
             isActive: dbRow ? dbRow.is_active === 1 : (meta.is_active === 1)
           });
@@ -85,7 +137,7 @@ router.get('/', (req, res) => {
 });
 
 // POST /api/v1/addons/:slug/toggle
-router.post('/:slug/toggle', requireAuth, (req, res) => {
+router.post('/:slug/toggle', requireAuth, requireCapability(CAPABILITIES.ADDONS_MANAGE), (req, res) => {
   const db = getDb();
   const slug = req.params.slug;
   const jsonPath = path.join(config.addonsDir, slug, 'addon.json');
@@ -118,46 +170,76 @@ router.post('/:slug/toggle', requireAuth, (req, res) => {
 });
 
 // GET /api/v1/addons/hooks (Introspection)
-router.get('/hooks', requireAuth, (req, res) => {
+router.get('/hooks', requireAuth, requireCapability(CAPABILITIES.ADDONS_MANAGE), (req, res) => {
   res.json(hooks.getIntrospection());
 });
 
 // POST /api/v1/addons/upload-zip
-router.post('/upload-zip', requireAuth, upload.single('addon_zip'), (req, res) => {
+router.post('/upload-zip', requireAuth, requireCapability(CAPABILITIES.ADDONS_MANAGE), addonUploadMiddleware, (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No addon zip package supplied.' });
   }
 
-  try {
-    const zip = new AdmZip(req.file.path);
-    const zipEntries = zip.getEntries();
-    const manifestEntry = zipEntries.find(e => e.entryName.endsWith('addon.json'));
+  const temporaryPath = req.file.path;
+  let destDir = null;
+  let createdDestination = false;
 
-    if (!manifestEntry) {
-      fs.unlinkSync(req.file.path);
-      return res.status(400).json({ error: 'Invalid addon package: missing addon.json manifest.' });
+  try {
+    let zip;
+    let zipEntries;
+    try {
+      zip = new AdmZip(temporaryPath);
+      zipEntries = zip.getEntries();
+    } catch {
+      throw new ArchiveSecurityError('invalid or unsupported ZIP archive.');
     }
 
-    const meta = JSON.parse(manifestEntry.getData().toString('utf8'));
-    const slug = meta.slug || path.basename(req.file.originalname, '.zip').toLowerCase().replace(/[^a-z0-9_-]/g, '');
-    const destDir = path.join(config.addonsDir, slug);
+    validateArchiveEntries(zipEntries);
+    const meta = readArchiveManifest(zipEntries, 'addon.json');
+    const slug = meta.slug;
+    destDir = resolveInstallDestination(config.addonsDir, slug);
 
-    zip.extractAllTo(destDir, true);
-    fs.unlinkSync(req.file.path);
+    for (const entry of zipEntries) {
+      resolveContainedPath(destDir, entry.entryName);
+    }
 
+    if (fs.existsSync(destDir)) {
+      return res.status(409).json({ error: `Addon "${slug}" is already installed.` });
+    }
+    if (!zip.test()) {
+      throw new ArchiveSecurityError('archive contents are corrupt, encrypted, or unsupported.');
+    }
+
+    try {
+      fs.mkdirSync(destDir, { recursive: false });
+      createdDestination = true;
+    } catch (error) {
+      if (error.code === 'EEXIST') {
+        return res.status(409).json({ error: `Addon "${slug}" is already installed.` });
+      }
+      throw error;
+    }
+
+    zip.extractAllTo(destDir, false, false);
     loadAddonsIntoRuntime();
 
     res.status(201).json({
-      message: `Addon "${meta.name || slug}" successfully installed and hotloaded into runtime.`,
+      message: `Addon "${typeof meta.name === 'string' && meta.name ? meta.name : slug}" successfully installed and hotloaded into runtime.`,
       slug
     });
   } catch (err) {
-    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    if (createdDestination) cleanupInstalledDirectory(destDir);
+    if (err instanceof ArchiveSecurityError) {
+      return res.status(400).json({ error: 'Invalid addon package: ' + err.message });
+    }
     res.status(500).json({ error: 'Failed to extract addon zip: ' + err.message });
+  } finally {
+    cleanupUploadedFile(temporaryPath);
   }
 });
 
 module.exports = {
   router,
-  loadAddonsIntoRuntime
+  loadAddonsIntoRuntime,
+  sanitizeAddonManifest
 };

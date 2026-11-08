@@ -1,6 +1,8 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const Database = require('better-sqlite3');
 const config = require('../config');
 const { initDb, updateOption, getDb } = require('../core/db');
 const { hashPassword, signToken } = require('../core/auth');
@@ -8,22 +10,46 @@ const { generateDropCode, createReshare } = require('../core/reshare-engine');
 
 const router = express.Router();
 
+function nodeVersionSupported() {
+  const [major, minor] = process.versions.node.split('.').map(Number);
+  return major > 22 || (major === 22 && minor >= 12);
+}
+
+function setupAllowed(req) {
+  if (config.setupToken) {
+    const supplied = String(req.get('x-deadletters-setup-token') || req.body.setupToken || '');
+    const expected = Buffer.from(config.setupToken);
+    const actual = Buffer.from(supplied);
+    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+  }
+
+  if (config.env === 'production') return false;
+  const address = req.socket.remoteAddress || '';
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+}
+
 // GET /api/v1/installer/status
 router.get('/status', (req, res) => {
   const isInstalled = config.isInstalled();
   const checks = {
     nodeVersion: {
-      passed: parseInt(process.versions.node.split('.')[0], 10) >= 18,
+      passed: nodeVersionSupported(),
       version: process.version
     },
     sqliteSupport: {
-      passed: true
+      passed: false
     },
     fsWritable: {
       passed: true
     },
     platform: process.platform
   };
+
+  try {
+    const sqlite = new Database(':memory:');
+    checks.sqliteSupport.passed = sqlite.prepare('SELECT 1 AS ok').get().ok === 1;
+    sqlite.close();
+  } catch {}
 
   try {
     const testFile = path.join(config.dataDir, '.test-write');
@@ -35,8 +61,9 @@ router.get('/status', (req, res) => {
 
   res.json({
     isInstalled,
-    systemReady: checks.nodeVersion.passed && checks.fsWritable.passed,
+    systemReady: checks.nodeVersion.passed && checks.sqliteSupport.passed && checks.fsWritable.passed,
     checks,
+    setupTokenRequired: Boolean(config.setupToken) || (config.env === 'production' && !isInstalled),
     engine: config.meta
   });
 });
@@ -46,8 +73,15 @@ router.post('/execute', (req, res) => {
   if (config.isInstalled()) {
     return res.status(400).json({ error: 'Engine already installed and initialized on this node.' });
   }
+  if (!setupAllowed(req)) {
+    return res.status(403).json({
+      error: config.setupToken || config.env === 'production'
+        ? 'A valid DEADLETTERS_SETUP_TOKEN is required for installation.'
+        : 'Web installation is restricted to localhost unless DEADLETTERS_SETUP_TOKEN is configured.'
+    });
+  }
 
-  const {
+  let {
     siteTitle = 'Deadletters Atelier',
     siteTagline = 'the plug is dead. stay wired.',
     siteNodeHandle = '@deadplug/main-node',
@@ -59,15 +93,32 @@ router.post('/execute', (req, res) => {
     seedDemoContent = true
   } = req.body;
 
-  if (!adminPassword || adminPassword.length < 6) {
-    return res.status(400).json({ error: 'Operator master credential must be at least 6 characters.' });
+  if (typeof adminPassword !== 'string' || adminPassword.length < 12) {
+    return res.status(400).json({ error: 'Operator master credential must be at least 12 characters.' });
+  }
+  if (typeof adminLogin !== 'string' || !/^[a-zA-Z0-9_.-]{3,64}$/.test(adminLogin)) {
+    return res.status(400).json({ error: 'Operator login must be 3–64 characters using letters, numbers, dots, dashes, or underscores.' });
+  }
+  if (typeof adminEmail !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail)) {
+    return res.status(400).json({ error: 'A valid operator email is required.' });
+  }
+  try {
+    const parsedSiteUrl = new URL(siteUrl);
+    if (!['http:', 'https:'].includes(parsedSiteUrl.protocol) || parsedSiteUrl.username || parsedSiteUrl.password) throw new Error();
+    siteUrl = parsedSiteUrl.href.replace(/\/$/, '');
+  } catch {
+    return res.status(400).json({ error: 'Site URL must be a valid HTTP(S) URL without credentials.' });
   }
 
+  let configWritten = false;
   try {
-    // 1. Initialize DB Schema
     const db = initDb();
+    const install = db.transaction(() => {
+      if (db.prepare('SELECT COUNT(*) AS count FROM dl_users').get().count > 0) {
+        throw new Error('Database already contains an operator account.');
+      }
 
-    // 2. Insert Superadmin User
+    // Insert Superadmin User
     const hashedPassword = hashPassword(adminPassword);
     const insertUser = db.prepare(`
       INSERT INTO dl_users (user_login, user_pass, user_nicename, user_email, user_url, display_name, role, avatar_url, bio)
@@ -95,7 +146,7 @@ router.post('/execute', (req, res) => {
     updateOption('admin_email', adminEmail);
     updateOption('active_theme', themeSlug);
     updateOption('permalink_structure', '/letter/%postname%');
-    updateOption('default_comment_approved', '1');
+    updateOption('default_comment_approved', '0');
     updateOption('posts_per_page', '10');
     updateOption('deadplug_atelier_branding', '1');
     updateOption('engine_installed_at', new Date().toISOString());
@@ -103,21 +154,40 @@ router.post('/execute', (req, res) => {
     // 4. Seed Demo Editorial Content if requested
     if (seedDemoContent) {
       seedDeadplugContent(db, adminUserId);
+      db.exec(`
+        UPDATE dl_term_taxonomy SET count = (
+          SELECT COUNT(*) FROM dl_term_relationships tr
+          WHERE tr.term_taxonomy_id = dl_term_taxonomy.term_taxonomy_id
+        )
+      `);
     }
 
-    // 5. Save config.json
     config.saveConfigFile({
       port: config.port,
       host: config.host,
       jwtSecret: config.jwtSecret,
+      provenanceSecret: config.provenanceSecret,
       installed: true,
       installedAt: new Date().toISOString()
     });
+    configWritten = true;
+    return db.prepare('SELECT * FROM dl_users WHERE ID = ?').get(adminUserId);
+    });
 
-    // 6. Sign JWT token for instant login
-    const adminUser = db.prepare('SELECT * FROM dl_users WHERE ID = ?').get(adminUserId);
+    let adminUser;
+    try {
+      adminUser = install();
+    } catch (error) {
+      if (configWritten && fs.existsSync(config.configFile)) fs.unlinkSync(config.configFile);
+      throw error;
+    }
+
     const token = signToken(adminUser);
-    res.cookie('deadletters_token', token, { httpOnly: false, maxAge: 30 * 24 * 3600 * 1000 });
+    try {
+      require('./addons.routes').loadAddonsIntoRuntime();
+    } catch (error) {
+      console.warn('[Installer] Addons will load on next restart:', error.message);
+    }
 
     res.status(201).json({
       success: true,
@@ -231,6 +301,7 @@ By pairing SQLite synchronous Write-Ahead-Logging with an in-memory event bus an
     INSERT INTO dl_comments (comment_post_ID, comment_author, comment_author_email, comment_author_url, comment_content, comment_approved)
     VALUES (?, 'Kira Vance // Neon Index', 'kira@neonindex.org', 'https://neonindex.org', 'The typography in this engine is unlike anything in the CMS space. The drop caps and pullquote cards feel like a physical printed issue of Dazed or 032c.', '1')
   `).run(p1.lastInsertRowid);
+  db.prepare('UPDATE dl_posts SET comment_count = 1 WHERE ID = ?').run(p1.lastInsertRowid);
 }
 
 module.exports = router;

@@ -42,7 +42,7 @@ const UsersView = {
                   <tr>
                     <td>
                       <div style="display: flex; align-items: center; gap: 10px;">
-                        <img src="${u.avatar_url || '/uploads/deadplug_operator_avatar.jpg'}" style="width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--dl-border-strong);" />
+                        <img src="${escapeHtml(safeUrl(u.avatar_url, '/uploads/deadplug_operator_avatar.jpg'))}" style="width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--dl-border-strong);" />
                         <div>
                           <div style="font-weight: 700; font-size: 0.92rem;">${escapeHtml(u.display_name)}</div>
                           <div style="font-size: 0.72rem; color: var(--dl-text-muted);">${escapeHtml(u.bio || '')}</div>
@@ -53,15 +53,15 @@ const UsersView = {
                     <td style="font-family: var(--dl-font-mono); font-size: 0.78rem; color: var(--dl-text-muted);">${escapeHtml(u.user_email)}</td>
                     <td>
                       <span class="dl-badge ${u.role === 'superadmin' ? 'dl-badge-accent' : (u.role === 'art_director' ? 'dl-badge-cyan' : '')}">
-                        ${u.role.toUpperCase()}
+                        ${escapeHtml(String(u.role || '').toUpperCase())}
                       </span>
                     </td>
                     <td style="font-family: var(--dl-font-mono); font-size: 0.75rem; color: var(--dl-text-muted);">
-                      ${new Date(u.user_registered).toLocaleDateString()}
+                      ${escapeHtml(new Date(u.user_registered).toLocaleDateString())}
                     </td>
                     <td style="text-align: right;">
                       ${u.ID !== App.currentUser?.id ? `
-                        <button class="dl-btn dl-btn-danger dl-btn-sm btn-delete-user" data-id="${u.ID}">DECOMMISSION</button>
+                        <button class="dl-btn dl-btn-danger dl-btn-sm btn-delete-user" data-id="${escapeHtml(u.ID)}">DECOMMISSION</button>
                       ` : `
                         <span style="font-family: var(--dl-font-mono); font-size: 0.72rem; color: var(--dl-text-muted);">YOU</span>
                       `}
@@ -79,7 +79,7 @@ const UsersView = {
         App.openModal(`
           <div class="dl-modal-header">
             <h3 style="font-size: 1.25rem;">ENROLL NEW NODE OPERATOR</h3>
-            <button class="dl-modal-close" onclick="App.closeModal()">✕</button>
+            <button class="dl-modal-close" type="button" data-close-modal>✕</button>
           </div>
           <div class="dl-form-group">
             <label class="dl-label">Operator Handle (Login)</label>
@@ -103,11 +103,11 @@ const UsersView = {
             </select>
           </div>
           <div class="dl-form-group">
-            <label class="dl-label">Secret Password (Min 6 chars)</label>
+            <label class="dl-label">Secret Password (Min 12 chars)</label>
             <input id="modal-user-pass" class="dl-input" type="password" placeholder="••••••••••••" required />
           </div>
           <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
-            <button class="dl-btn dl-btn-outline dl-btn-sm" onclick="App.closeModal()">CANCEL</button>
+            <button class="dl-btn dl-btn-outline dl-btn-sm" type="button" data-close-modal>CANCEL</button>
             <button id="btn-modal-enroll" class="dl-btn dl-btn-accent dl-btn-sm">⚡ COMMISSION OPERATOR</button>
           </div>
         `);
@@ -119,8 +119,8 @@ const UsersView = {
           const role = document.getElementById('modal-user-role').value;
           const password = document.getElementById('modal-user-pass').value;
 
-          if (!login || !email || !password || password.length < 6) {
-            return alert('All fields required. Password must be at least 6 characters.');
+          if (!login || !email || !password || password.length < 12) {
+            return alert('All fields required. Password must be at least 12 characters.');
           }
 
           try {
@@ -145,7 +145,7 @@ const UsersView = {
         btn.addEventListener('click', async () => {
           if (confirm('Decommission this operator? Their access keys will be terminated.')) {
             try {
-              await API.del(`/api/v1/auth/users/${btn.dataset.id}`);
+              await API.del(`/api/v1/auth/users/${encodeURIComponent(btn.dataset.id)}`);
               App.showToast('Operator decommissioned.');
               this.render(container);
             } catch (e) {
@@ -156,7 +156,7 @@ const UsersView = {
       });
 
     } catch (err) {
-      container.innerHTML = `<div class="dl-admin-content"><div class="dl-card" style="border-color: var(--dl-crimson);">Users error: ${err.message}</div></div>`;
+      container.innerHTML = `<div class="dl-admin-content"><div class="dl-card" style="border-color: var(--dl-crimson);">Users error: ${escapeHtml(err.message)}</div></div>`;
     }
   }
 };

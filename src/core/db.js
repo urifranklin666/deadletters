@@ -1,3 +1,4 @@
+const fs = require('node:fs');
 const Database = require('better-sqlite3');
 const config = require('../config');
 const schema = require('./schema');
@@ -6,22 +7,44 @@ const { runMigrations } = require('./migrations');
 
 let db = null;
 
+// Database files contain credentials-equivalent local state, including the node
+// private key. Restrict the main file and its WAL/SHM sidecars where the
+// platform supports POSIX permission bits.
+function restrictDatabasePermissions(dbPath) {
+  for (const path of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+    try {
+      if (fs.existsSync(path)) fs.chmodSync(path, 0o600);
+    } catch {
+      // chmod is unavailable on some platforms/filesystems; opening still works.
+    }
+  }
+}
+
 function getDb() {
   if (!db) {
+    // Create a new database file with owner-only permissions before SQLite
+    // opens it, then restrict an existing file and sidecars as well.
+    try {
+      if (!fs.existsSync(config.dbPath)) {
+        fs.closeSync(fs.openSync(config.dbPath, 'a', 0o600));
+      }
+    } catch {
+      // Fall through to better-sqlite3, which reports a useful open error.
+    }
+    restrictDatabasePermissions(config.dbPath);
     db = new Database(config.dbPath);
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
     db.pragma('synchronous = NORMAL');
-    try { runMigrations(db); } catch (e) { console.error('Migration error:', e); }
+    db.exec(schema);
+    runMigrations(db);
+    restrictDatabasePermissions(config.dbPath);
   }
   return db;
 }
 
 function initDb() {
-  const database = getDb();
-  database.exec(schema);
-  try { runMigrations(database); } catch (e) { console.error('Migration error:', e); }
-  return database;
+  return getDb();
 }
 
 // WordPress-compatible Options API

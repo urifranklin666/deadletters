@@ -22,12 +22,14 @@ const EditorStudio = {
 
     if (postId) {
       try {
-        const res = await API.get(`/api/v1/posts/${postId}`);
+        const res = await API.get(`/api/v1/posts/${encodeURIComponent(postId)}`);
         post = res.post;
       } catch (err) {
         alert('Could not load letter: ' + err.message);
       }
     }
+
+    const featuredImageUrl = safeUrl(post.featured_image);
 
     container.innerHTML = `
       <div class="dl-admin-content">
@@ -36,7 +38,7 @@ const EditorStudio = {
           <div style="display: flex; align-items: center; gap: 1rem;">
             <a href="#/admin" class="dl-btn dl-btn-ghost dl-btn-sm">← RETURN TO TERMINAL</a>
             <span class="dl-badge dl-badge-accent">${postId ? 'EDITING TRANSMISSION' : 'NEW LETTER DROP'}</span>
-            <span style="font-family: var(--dl-font-mono); font-size: 0.75rem; color: var(--dl-text-muted);">CODE: ${post.drop_code || 'PENDING'}</span>
+            <span style="font-family: var(--dl-font-mono); font-size: 0.75rem; color: var(--dl-text-muted);">CODE: ${escapeHtml(post.drop_code || 'PENDING')}</span>
           </div>
 
           <div style="display: flex; align-items: center; gap: 0.75rem;">
@@ -137,8 +139,8 @@ const EditorStudio = {
                 <input type="file" id="file-uploader" style="display: none;" accept="image/*" />
                 <button id="btn-upload-media" class="dl-btn dl-btn-outline dl-btn-sm" style="width: 100%;">UPLOAD ASSET</button>
               </div>
-              <div id="media-preview-box" style="margin-top: 1rem; ${post.featured_image ? '' : 'display: none;'}">
-                <img id="featured-preview" src="${post.featured_image || ''}" style="width: 100%; height: 120px; object-fit: cover; border: 1px solid var(--dl-border);" />
+              <div id="media-preview-box" style="margin-top: 1rem; ${featuredImageUrl ? '' : 'display: none;'}">
+                <img id="featured-preview" src="${escapeHtml(featuredImageUrl)}" style="width: 100%; height: 120px; object-fit: cover; border: 1px solid var(--dl-border);" />
               </div>
             </div>
 
@@ -147,8 +149,8 @@ const EditorStudio = {
               <div class="dl-box-title">// SEO & TELEMETRY CARD</div>
               <div style="background: #000; border: 1px solid var(--dl-border); padding: 1rem; font-family: var(--dl-font-mono); font-size: 0.72rem;">
                 <div style="color: var(--dl-text-muted); margin-bottom: 0.25rem;">deadplug.digital &gt; letters &gt; ...</div>
-                <div id="seo-preview-title" style="color: var(--dl-cyan); font-weight: 700; margin-bottom: 0.25rem; font-size: 0.82rem;">${post.post_title || 'Untitled Transmission'}</div>
-                <div id="seo-preview-desc" style="color: var(--dl-text-muted); font-size: 0.7rem; line-height: 1.4;">${post.post_excerpt || 'No synopsis provided.'}</div>
+                <div id="seo-preview-title" style="color: var(--dl-cyan); font-weight: 700; margin-bottom: 0.25rem; font-size: 0.82rem;">${escapeHtml(post.post_title || 'Untitled Transmission')}</div>
+                <div id="seo-preview-desc" style="color: var(--dl-text-muted); font-size: 0.7rem; line-height: 1.4;">${escapeHtml(post.post_excerpt || 'No synopsis provided.')}</div>
               </div>
             </div>
           </div>
@@ -185,20 +187,20 @@ const EditorStudio = {
     // Mode Toggle (Markdown vs Preview)
     const modeBtns = container.querySelectorAll('.dl-mode-btn');
     modeBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         modeBtns.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         const mode = btn.dataset.mode;
         if (mode === 'preview') {
           contentArea.style.display = 'none';
           previewArea.style.display = 'block';
-          // Simple local render
-          let html = contentArea.value
-            .replace(/\[glitch\](.*?)\[\/glitch\]/gis, '<span class="dl-glitch-text">$1</span>')
-            .replace(/\[pullquote(?:\s+author="([^"]*)")?\](.*?)\[\/pullquote\]/gis, '<figure class="dl-editorial-pullquote"><blockquote class="dl-quote-body">$2</blockquote><figcaption class="dl-quote-author">// $1</figcaption></figure>')
-            .replace(/\[callout(?:\s+type="([^"]*)")?\](.*?)\[\/callout\]/gis, '<div class="dl-callout dl-callout-$1"><div class="dl-callout-header">// NOTICE</div><div>$2</div></div>')
-            .replace(/\n\n/g, '<br/><br/>');
-          previewArea.innerHTML = html || '<em>Empty drop composition.</em>';
+          previewArea.textContent = 'Rendering secure preview…';
+          try {
+            const rendered = await API.post('/api/v1/posts/render-preview', { content: contentArea.value });
+            previewArea.innerHTML = rendered.html || '<em>Empty drop composition.</em>';
+          } catch (error) {
+            previewArea.textContent = 'Preview failed: ' + error.message;
+          }
         } else {
           contentArea.style.display = 'block';
           previewArea.style.display = 'none';
@@ -246,18 +248,20 @@ const EditorStudio = {
       const file = e.target.files[0];
       if (!file) return;
       uploadBtn.disabled = true;
-      uploadBtn.innerHTML = 'UPLOADING...';
+      uploadBtn.textContent = 'UPLOADING...';
       try {
         const res = await API.uploadFile(file);
-        featuredInput.value = res.url;
-        previewImg.src = res.url;
+        const imageUrl = safeUrl(res.url);
+        if (!imageUrl) throw new Error('Upload returned an invalid image URL.');
+        featuredInput.value = imageUrl;
+        previewImg.src = imageUrl;
         previewBox.style.display = 'block';
         App.showToast('Asset uploaded to vault.');
       } catch (err) {
         alert('Upload failed: ' + err.message);
       } finally {
         uploadBtn.disabled = false;
-        uploadBtn.innerHTML = 'UPLOAD ASSET';
+        uploadBtn.textContent = 'UPLOAD ASSET';
       }
     });
 
@@ -289,12 +293,12 @@ const EditorStudio = {
 
       try {
         if (this.activePostId) {
-          await API.put(`/api/v1/posts/${this.activePostId}`, payload);
+          await API.put(`/api/v1/posts/${encodeURIComponent(this.activePostId)}`, payload);
           App.showToast('Letter updated in atelier archive.');
         } else {
           const res = await API.post('/api/v1/posts', payload);
           App.showToast('Letter dropped successfully.');
-          window.location.hash = `#/admin/editor/${res.post.ID}`;
+          window.location.hash = `#/admin/editor/${encodeURIComponent(res.post.ID)}`;
         }
       } catch (err) {
         alert('Failed to save transmission: ' + err.message);
@@ -309,12 +313,12 @@ const EditorStudio = {
     if (revBtn) {
       revBtn.addEventListener('click', async () => {
         try {
-          const res = await API.get(`/api/v1/posts/${this.activePostId}/revisions`);
+          const res = await API.get(`/api/v1/posts/${encodeURIComponent(this.activePostId)}/revisions`);
           const revs = res.revisions || [];
           App.openModal(`
             <div class="dl-modal-header">
               <h3 style="font-size: 1.25rem;">POST REVISIONS & SNAPSHOT HISTORY</h3>
-              <button class="dl-modal-close" onclick="App.closeModal()">✕</button>
+              <button class="dl-modal-close" type="button" data-close-modal>✕</button>
             </div>
             <p style="font-size: 0.82rem; color: var(--dl-text-muted); margin-bottom: 1.25rem;">Select an earlier editorial version to restore.</p>
             <div style="display: flex; flex-direction: column; gap: 0.75rem; max-height: 400px; overflow-y: auto;">
@@ -323,10 +327,10 @@ const EditorStudio = {
                   <div>
                     <div style="font-weight: 700; font-size: 0.9rem;">${escapeHtml(r.post_title)}</div>
                     <div style="font-family: var(--dl-font-mono); font-size: 0.72rem; color: var(--dl-text-muted);">
-                      Snapshot by ${escapeHtml(r.author_name || 'Operator')} on ${new Date(r.created_at).toLocaleString()}
+                      Snapshot by ${escapeHtml(r.author_name || 'Operator')} on ${escapeHtml(new Date(r.created_at).toLocaleString())}
                     </div>
                   </div>
-                  <button class="dl-btn dl-btn-accent dl-btn-sm btn-restore-rev" data-revid="${r.revision_id}">RESTORE VERSION</button>
+                  <button class="dl-btn dl-btn-accent dl-btn-sm btn-restore-rev" data-revid="${escapeHtml(r.revision_id)}">RESTORE VERSION</button>
                 </div>
               `).join('')}
             </div>
@@ -335,7 +339,7 @@ const EditorStudio = {
           document.querySelectorAll('.btn-restore-rev').forEach(btn => {
             btn.addEventListener('click', async () => {
               if (confirm('Restore letter to this historical version?')) {
-                await API.post(`/api/v1/posts/${this.activePostId}/revisions/${btn.dataset.revid}/restore`);
+                await API.post(`/api/v1/posts/${encodeURIComponent(this.activePostId)}/revisions/${encodeURIComponent(btn.dataset.revid)}/restore`);
                 App.closeModal();
                 App.showToast('Historical revision restored.');
                 EditorStudio.render(container, this.activePostId);
@@ -353,7 +357,7 @@ const EditorStudio = {
     if (trashBtn) {
       trashBtn.addEventListener('click', async () => {
         if (confirm('Move this letter to the trash queue?')) {
-          await API.put(`/api/v1/posts/${this.activePostId}/trash`);
+          await API.put(`/api/v1/posts/${encodeURIComponent(this.activePostId)}/trash`);
           App.showToast('Letter moved to trash.');
           window.location.hash = '#/admin';
         }

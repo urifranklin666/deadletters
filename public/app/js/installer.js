@@ -13,6 +13,7 @@ const InstallerWizard = {
     adminLogin: 'clown',
     adminEmail: 'clown@deadplug.digital',
     adminPassword: '',
+    setupToken: '',
     themeSlug: 'deadplug-editorial',
     seedDemoContent: true
   },
@@ -78,7 +79,7 @@ const InstallerWizard = {
           <div style="margin-top: 1.25rem; display: flex; flex-direction: column; gap: 0.75rem;">
             <div style="display: flex; justify-content: space-between; padding: 0.75rem; background: var(--dl-surface); border: 1px solid var(--dl-border); font-family: var(--dl-font-mono); font-size: 0.8rem;">
               <span>NODE.JS RUNTIME</span>
-              <span style="color: var(--dl-emerald);">✓ ${status.checks.nodeVersion.version} (READY)</span>
+              <span style="color: var(--dl-emerald);">✓ ${escapeHtml(status.checks.nodeVersion.version)} (READY)</span>
             </div>
             <div style="display: flex; justify-content: space-between; padding: 0.75rem; background: var(--dl-surface); border: 1px solid var(--dl-border); font-family: var(--dl-font-mono); font-size: 0.8rem;">
               <span>SQLITE STORAGE ENGINE</span>
@@ -104,15 +105,15 @@ const InstallerWizard = {
           <h3 style="font-size: 1.15rem; margin-bottom: 0.75rem;">Atelier Node Identity</h3>
           <div class="dl-form-group">
             <label class="dl-label">Site / Atelier Title</label>
-            <input id="input-title" class="dl-input" type="text" value="${this.data.siteTitle}" />
+            <input id="input-title" class="dl-input" type="text" value="${escapeHtml(this.data.siteTitle)}" />
           </div>
           <div class="dl-form-group">
             <label class="dl-label">Tagline / Transmission Header</label>
-            <input id="input-tagline" class="dl-input" type="text" value="${this.data.siteTagline}" />
+            <input id="input-tagline" class="dl-input" type="text" value="${escapeHtml(this.data.siteTagline)}" />
           </div>
           <div class="dl-form-group">
             <label class="dl-label">Mesh Node Handle</label>
-            <input id="input-handle" class="dl-input" type="text" value="${this.data.siteNodeHandle}" />
+            <input id="input-handle" class="dl-input" type="text" value="${escapeHtml(this.data.siteNodeHandle)}" />
           </div>
         </div>
         <div style="display: flex; justify-content: space-between;">
@@ -129,16 +130,22 @@ const InstallerWizard = {
           <p style="font-size: 0.88rem; color: var(--dl-text-muted); margin-bottom: 1rem;">This account will have Superadmin clearance to govern the engine.</p>
           <div class="dl-form-group">
             <label class="dl-label">Operator Username</label>
-            <input id="input-login" class="dl-input" type="text" value="${this.data.adminLogin}" />
+            <input id="input-login" class="dl-input" type="text" value="${escapeHtml(this.data.adminLogin)}" />
           </div>
           <div class="dl-form-group">
             <label class="dl-label">Operator Email</label>
-            <input id="input-email" class="dl-input" type="email" value="${this.data.adminEmail}" />
+            <input id="input-email" class="dl-input" type="email" value="${escapeHtml(this.data.adminEmail)}" />
           </div>
           <div class="dl-form-group">
-            <label class="dl-label">Master Secret Key / Password (Min 6 chars)</label>
-            <input id="input-password" class="dl-input" type="password" placeholder="••••••••••••" value="${this.data.adminPassword}" />
+            <label class="dl-label">Master Secret Key / Password (Min 12 chars)</label>
+            <input id="input-password" class="dl-input" type="password" placeholder="••••••••••••" value="${escapeHtml(this.data.adminPassword)}" />
           </div>
+          ${status.setupTokenRequired ? `
+            <div class="dl-form-group">
+              <label class="dl-label">Installation Setup Token</label>
+              <input id="input-setup-token" class="dl-input" type="password" value="${escapeHtml(this.data.setupToken)}" autocomplete="off" />
+            </div>
+          ` : ''}
         </div>
         <div style="display: flex; justify-content: space-between;">
           <button id="btn-step-back" class="dl-btn dl-btn-outline">← Back</button>
@@ -192,8 +199,13 @@ const InstallerWizard = {
           this.data.adminLogin = container.querySelector('#input-login').value;
           this.data.adminEmail = container.querySelector('#input-email').value;
           this.data.adminPassword = container.querySelector('#input-password').value;
-          if (!this.data.adminPassword || this.data.adminPassword.length < 6) {
-            alert('Password must be at least 6 characters.');
+          this.data.setupToken = container.querySelector('#input-setup-token')?.value || '';
+          if (!this.data.adminPassword || this.data.adminPassword.length < 12) {
+            alert('Password must be at least 12 characters.');
+            return;
+          }
+          if (status.setupTokenRequired && !this.data.setupToken) {
+            alert('The installation setup token is required.');
             return;
           }
         }
@@ -215,17 +227,18 @@ const InstallerWizard = {
         this.data.seedDemoContent = container.querySelector('#check-seed').checked;
 
         execBtn.disabled = true;
-        execBtn.innerHTML = '⚡ Compiling Engine...';
+        execBtn.textContent = '⚡ Compiling Engine...';
 
         try {
           const res = await API.post('/api/v1/installer/execute', this.data);
           API.setToken(res.token);
+          App.currentUser = res.user;
           App.showToast('Deadletters Engine Initialized. Welcome, Operator.');
           window.location.hash = '#/admin';
         } catch (err) {
           alert('Installation Failed: ' + err.message);
           execBtn.disabled = false;
-          execBtn.innerHTML = '⚡ Initialize Engine';
+          execBtn.textContent = '⚡ Initialize Engine';
         }
       });
     }

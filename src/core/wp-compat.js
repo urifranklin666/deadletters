@@ -1,5 +1,6 @@
 const express = require('express');
 const { getDb, getOption } = require('./db');
+const { renderContent } = require('./content-renderer');
 const router = express.Router();
 
 /**
@@ -18,32 +19,39 @@ router.get('/', (req, res) => {
     namespaces: ['wp/v2', 'deadletters/v1'],
     authentication: {},
     routes: {
-      '/wp/v2/posts': { namespace: 'wp/v2', methods: ['GET', 'POST'] },
-      '/wp/v2/posts/(?P<id>[\\d]+)': { namespace: 'wp/v2', methods: ['GET', 'PUT', 'DELETE'] },
+      '/wp/v2/posts': { namespace: 'wp/v2', methods: ['GET'] },
+      '/wp/v2/posts/(?P<id>[\\d]+)': { namespace: 'wp/v2', methods: ['GET'] },
       '/wp/v2/pages': { namespace: 'wp/v2', methods: ['GET'] },
       '/wp/v2/categories': { namespace: 'wp/v2', methods: ['GET'] },
       '/wp/v2/tags': { namespace: 'wp/v2', methods: ['GET'] },
       '/wp/v2/users': { namespace: 'wp/v2', methods: ['GET'] },
-      '/wp/v2/comments': { namespace: 'wp/v2', methods: ['GET', 'POST'] }
+      '/wp/v2/comments': { namespace: 'wp/v2', methods: ['GET'] }
     }
   });
 });
 
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character]);
+}
+
 // Format post in WP schema
 function formatWpPost(row, req) {
-  const siteUrl = getOption('site_url', `${req.protocol}://${req.get('host')}`);
+  const siteUrl = getOption('site_url', `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+  const publicPath = `/${row.post_type === 'page' ? 'page' : 'letter'}/${encodeURIComponent(row.post_name)}`;
   return {
     id: row.ID,
     date: row.post_date,
     date_gmt: row.post_date_gmt,
-    guid: { rendered: `${siteUrl}/letter/${row.post_name}` },
+    guid: { rendered: `${siteUrl}${publicPath}` },
     modified: row.post_modified,
     slug: row.post_name,
     status: row.post_status,
     type: row.post_type,
-    link: `${siteUrl}/letter/${row.post_name}`,
+    link: `${siteUrl}${publicPath}`,
     title: { rendered: row.post_title },
-    content: { rendered: row.post_content, protected: false },
+    content: { rendered: renderContent(row.post_content), protected: false },
     excerpt: { rendered: `<p>${row.post_excerpt || ''}</p>`, protected: false },
     author: row.post_author,
     featured_media: row.featured_image ? 1 : 0,
@@ -69,19 +77,25 @@ router.get('/wp/v2/posts', (req, res) => {
   const page = Math.max(parseInt(req.query.page || '1', 10), 1);
   const offset = (page - 1) * perPage;
 
-  let query = "SELECT * FROM dl_posts WHERE post_type = 'post' AND post_status = 'publish'";
+  const visibility = "post_type = 'post' AND post_status = 'publish'";
+  let query = `SELECT * FROM dl_posts WHERE ${visibility}`;
+  let countQuery = `SELECT COUNT(*) as count FROM dl_posts WHERE ${visibility}`;
   const params = [];
+  const countParams = [];
 
   if (req.query.search) {
-    query += ' AND (post_title LIKE ? OR post_content LIKE ?)';
+    const searchClause = ' AND (post_title LIKE ? OR post_content LIKE ?)';
+    query += searchClause;
+    countQuery += searchClause;
     params.push(`%${req.query.search}%`, `%${req.query.search}%`);
+    countParams.push(...params);
   }
 
   query += ' ORDER BY post_date DESC LIMIT ? OFFSET ?';
   params.push(perPage, offset);
 
   const posts = db.prepare(query).all(...params);
-  const totalCount = db.prepare("SELECT COUNT(*) as count FROM dl_posts WHERE post_type = 'post' AND post_status = 'publish'").get().count;
+  const totalCount = db.prepare(countQuery).get(...countParams).count;
 
   res.set('X-WP-Total', totalCount);
   res.set('X-WP-TotalPages', Math.ceil(totalCount / perPage));
@@ -91,7 +105,7 @@ router.get('/wp/v2/posts', (req, res) => {
 // GET /wp-json/wp/v2/posts/:id
 router.get('/wp/v2/posts/:id', (req, res) => {
   const db = getDb();
-  const post = db.prepare('SELECT * FROM dl_posts WHERE ID = ?').get(req.params.id);
+  const post = db.prepare("SELECT * FROM dl_posts WHERE ID = ? AND post_type = 'post' AND post_status = 'publish'").get(req.params.id);
   if (!post) {
     return res.status(404).json({ code: 'rest_post_invalid_id', message: 'Invalid post ID.', data: { status: 404 } });
   }
@@ -140,13 +154,16 @@ router.get('/wp/v2/users', (req, res) => {
 router.get('/wp/v2/comments', (req, res) => {
   const db = getDb();
   const comments = db.prepare(`
-    SELECT comment_ID as id, comment_post_ID as post, comment_author as author_name,
-           comment_date as date, comment_content as content, comment_parent as parent
-    FROM dl_comments WHERE comment_approved = '1' ORDER BY comment_date DESC LIMIT 50
+    SELECT c.comment_ID as id, c.comment_post_ID as post, c.comment_author as author_name,
+           c.comment_date as date, c.comment_content as content, c.comment_parent as parent
+    FROM dl_comments c
+    JOIN dl_posts p ON p.ID = c.comment_post_ID
+    WHERE c.comment_approved = '1' AND p.post_status = 'publish'
+    ORDER BY c.comment_date DESC LIMIT 50
   `).all();
   res.json(comments.map(c => ({
     ...c,
-    content: { rendered: `<p>${c.content}</p>` }
+    content: { rendered: `<p>${escapeHtml(c.content)}</p>` }
   })));
 });
 

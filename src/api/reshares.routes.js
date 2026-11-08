@@ -1,7 +1,16 @@
 const express = require('express');
 const { requireAuth, optionalAuth } = require('../core/auth');
 const { createReshare, getReshareStream } = require('../core/reshare-engine');
+const { verifyReshareRecord } = require('../core/provenance');
+const { importExternalMetadata } = require('../core/external-metadata');
 const { getDb } = require('../core/db');
+const { createRateLimiter } = require('../core/rate-limit');
+
+const externalImportRateLimit = createRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 30,
+  message: 'External metadata import limit reached. Try again later.'
+});
 
 const router = express.Router();
 
@@ -49,48 +58,20 @@ router.post('/', requireAuth, (req, res) => {
     });
   } catch (err) {
     console.error('[Reshares API] Failed to create reshare:', err);
-    res.status(500).json({ error: 'Failed to broadcast re-letter: ' + err.message });
+    res.status(err.status || 500).json({ error: 'Failed to broadcast re-letter: ' + err.message });
   }
 });
 
 // POST /api/v1/reshares/import-external
-router.post('/import-external', requireAuth, async (req, res) => {
+router.post('/import-external', requireAuth, externalImportRateLimit, async (req, res) => {
   const { url } = req.body;
   if (!url) {
     return res.status(400).json({ error: 'External URL required.' });
   }
 
   try {
-    const response = await fetch(url, {
-      headers: { 'User-Agent': 'Deadletters-Bot/1.0 (+https://deadplug.digital)' },
-      signal: AbortSignal.timeout(5000)
-    });
-    const html = await response.text();
-
-    // Basic regex extraction of metadata
-    const titleMatch = html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i) ||
-                       html.match(/<title>([^<]+)<\/title>/i);
-    const descMatch = html.match(/<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i) ||
-                      html.match(/<meta\s+name=["']description["']\s+content=["']([^"']+)["']/i);
-    const imageMatch = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
-    const authorMatch = html.match(/<meta\s+name=["']author["']\s+content=["']([^"']+)["']/i);
-
-    const title = titleMatch ? titleMatch[1].trim() : url;
-    const excerpt = descMatch ? descMatch[1].trim() : '';
-    const image = imageMatch ? imageMatch[1].trim() : null;
-    const author = authorMatch ? authorMatch[1].trim() : new URL(url).hostname;
-
-    res.json({
-      success: true,
-      data: {
-        sourceUrl: url,
-        sourceNode: new URL(url).hostname,
-        originalTitle: title,
-        originalExcerpt: excerpt,
-        originalAuthor: author,
-        featuredImage: image
-      }
-    });
+    const data = await importExternalMetadata(url);
+    res.json({ success: true, data });
   } catch (err) {
     res.status(422).json({
       error: 'Could not fetch external node metadata: ' + err.message,
@@ -113,13 +94,38 @@ router.get('/provenance/:id', (req, res) => {
     return res.status(404).json({ error: 'Reshare provenance record not found.' });
   }
 
+  let provenance = [];
+  try {
+    const parsed = JSON.parse(reshare.provenance_chain || '[]');
+    if (Array.isArray(parsed)) provenance = parsed;
+  } catch {}
+
+  const verification = verifyReshareRecord(reshare);
+
   res.json({
     reshare_id: reshare.reshare_id,
     post_id: reshare.post_id,
     source_url: reshare.source_url,
     source_node: reshare.source_node,
+    original_author: reshare.original_author,
+    original_title: reshare.original_title,
+    original_excerpt: reshare.original_excerpt,
+    curator_commentary: reshare.curator_commentary,
     signature: reshare.signature,
-    provenance_chain: JSON.parse(reshare.provenance_chain || '[]')
+    envelope_json: reshare.envelope_json || null,
+    envelope_signature: reshare.envelope_signature || null,
+    signature_algorithm: reshare.signature_algorithm || null,
+    signed_at: reshare.signed_at || null,
+    signature_valid: verification.signature_valid,
+    hash_valid: verification.hash_valid,
+    verification_status: verification.verification_status,
+    verification_scope: verification.verification_scope,
+    key_id: verification.key_id,
+    envelope_hash: verification.envelope_hash,
+    parent_envelope_hash: verification.parent_envelope_hash,
+    public_key_url: verification.public_key_url,
+    reason: verification.reason,
+    provenance_chain: provenance
   });
 });
 

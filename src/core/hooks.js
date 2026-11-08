@@ -52,6 +52,15 @@ class HookEngine {
     return value;
   }
 
+  removeAddon(addonSlug) {
+    for (const [hookName, listeners] of this.actions.entries()) {
+      this.actions.set(hookName, listeners.filter(listener => listener.addonSlug !== addonSlug));
+    }
+    for (const [hookName, listeners] of this.filters.entries()) {
+      this.filters.set(hookName, listeners.filter(listener => listener.addonSlug !== addonSlug));
+    }
+  }
+
   removeAction(hookName, callback) {
     if (!this.actions.has(hookName)) return;
     const filtered = this.actions.get(hookName).filter(item => item.callback !== callback);
@@ -87,3 +96,4 @@ class HookEngine {
 
 const hooks = new HookEngine();
 module.exports = hooks;
+module.exports.HookEngine = HookEngine;

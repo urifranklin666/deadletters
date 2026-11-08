@@ -50,13 +50,13 @@ const AddonsView = {
                   <tr>
                     <td>
                       <label class="dl-switch">
-                        <input type="checkbox" class="toggle-addon-switch" data-slug="${a.slug}" ${a.isActive ? 'checked' : ''} />
+                        <input type="checkbox" class="toggle-addon-switch" data-slug="${escapeHtml(a.slug)}" ${a.isActive ? 'checked' : ''} />
                         <span class="dl-slider"></span>
                       </label>
                     </td>
                     <td>
                       <div style="font-weight: 700; font-size: 0.95rem;">${escapeHtml(a.name)}</div>
-                      <div style="font-family: var(--dl-font-mono); font-size: 0.7rem; color: var(--dl-accent);">/${a.slug}</div>
+                      <div style="font-family: var(--dl-font-mono); font-size: 0.7rem; color: var(--dl-accent);">/${escapeHtml(a.slug)}</div>
                     </td>
                     <td style="font-family: var(--dl-font-mono); font-size: 0.75rem;">v${escapeHtml(a.version)}</td>
                     <td style="font-family: var(--dl-font-mono); font-size: 0.75rem; color: var(--dl-text-muted);">${escapeHtml(a.author)}</td>
@@ -82,9 +82,9 @@ const AddonsView = {
                 <div style="display: flex; flex-direction: column; gap: 0.5rem;">
                   ${(hooks.actions || []).map(act => `
                     <div style="padding: 0.75rem; background: var(--dl-surface); border: 1px solid var(--dl-border); font-family: var(--dl-font-mono); font-size: 0.75rem;">
-                      <strong style="color: #fff;">${act.hook}</strong>
+                      <strong style="color: #fff;">${escapeHtml(act.hook)}</strong>
                       <div style="color: var(--dl-text-muted); font-size: 0.7rem; margin-top: 2px;">
-                        Handlers: ${act.handlers.map(h => `${h.addon} (pri: ${h.priority})`).join(', ') || 'none'}
+                        Handlers: ${escapeHtml(act.handlers.map(h => `${h.addon} (pri: ${h.priority})`).join(', ') || 'none')}
                       </div>
                     </div>
                   `).join('')}
@@ -96,9 +96,9 @@ const AddonsView = {
                 <div style="display: flex; flex-direction: column; gap: 0.5rem;">
                   ${(hooks.filters || []).map(flt => `
                     <div style="padding: 0.75rem; background: var(--dl-surface); border: 1px solid var(--dl-border); font-family: var(--dl-font-mono); font-size: 0.75rem;">
-                      <strong style="color: #fff;">${flt.hook}</strong>
+                      <strong style="color: #fff;">${escapeHtml(flt.hook)}</strong>
                       <div style="color: var(--dl-text-muted); font-size: 0.7rem; margin-top: 2px;">
-                        Handlers: ${flt.handlers.map(h => `${h.addon} (pri: ${h.priority})`).join(', ') || 'none'}
+                        Handlers: ${escapeHtml(flt.handlers.map(h => `${h.addon} (pri: ${h.priority})`).join(', ') || 'none')}
                       </div>
                     </div>
                   `).join('')}
@@ -111,7 +111,7 @@ const AddonsView = {
 
       this.bindAddonEvents(container);
     } catch (err) {
-      container.innerHTML = `<div class="dl-admin-content"><div class="dl-card" style="border-color: var(--dl-crimson);">Addons view error: ${err.message}</div></div>`;
+      container.innerHTML = `<div class="dl-admin-content"><div class="dl-card" style="border-color: var(--dl-crimson);">Addons view error: ${escapeHtml(err.message)}</div></div>`;
     }
   },
 
@@ -121,7 +121,7 @@ const AddonsView = {
       sw.addEventListener('change', async () => {
         const slug = sw.dataset.slug;
         try {
-          const res = await API.post(`/api/v1/addons/${slug}/toggle`);
+          const res = await API.post(`/api/v1/addons/${encodeURIComponent(slug)}/toggle`);
           App.showToast(res.message);
           this.render(container);
         } catch (e) {

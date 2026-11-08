@@ -47,20 +47,20 @@ const PagesView = {
                   <tr>
                     <td>
                       <div style="font-weight: 700; font-size: 0.95rem;">
-                        <a href="#/page/${p.post_name}" target="_blank">${escapeHtml(p.post_title)}</a>
+                        <a href="#/page/${escapeHtml(encodeURIComponent(p.post_name || ''))}" target="_blank">${escapeHtml(p.post_title)}</a>
                       </div>
                     </td>
                     <td style="font-family: var(--dl-font-mono); font-size: 0.78rem; color: var(--dl-cyan);">/page/${escapeHtml(p.post_name)}</td>
                     <td>
-                      <span class="dl-badge ${p.post_status === 'publish' ? 'dl-badge-accent' : ''}">${p.post_status.toUpperCase()}</span>
+                      <span class="dl-badge ${p.post_status === 'publish' ? 'dl-badge-accent' : ''}">${escapeHtml(String(p.post_status || '').toUpperCase())}</span>
                     </td>
                     <td style="font-family: var(--dl-font-mono); font-size: 0.75rem; color: var(--dl-text-muted);">
-                      ${new Date(p.post_modified || p.post_date).toLocaleDateString()}
+                      ${escapeHtml(new Date(p.post_modified || p.post_date).toLocaleDateString())}
                     </td>
                     <td style="text-align: right;">
-                      <a href="#/page/${p.post_name}" target="_blank" class="dl-btn dl-btn-ghost dl-btn-sm">VIEW ↗</a>
-                      <a href="#/admin/editor/${p.ID}" class="dl-btn dl-btn-ghost dl-btn-sm">EDIT</a>
-                      <button class="dl-btn dl-btn-danger dl-btn-sm btn-delete-page" data-id="${p.ID}">PURGE</button>
+                      <a href="#/page/${escapeHtml(encodeURIComponent(p.post_name || ''))}" target="_blank" class="dl-btn dl-btn-ghost dl-btn-sm">VIEW ↗</a>
+                      <a href="#/admin/editor/${escapeHtml(encodeURIComponent(p.ID))}" class="dl-btn dl-btn-ghost dl-btn-sm">EDIT</a>
+                      <button class="dl-btn dl-btn-danger dl-btn-sm btn-delete-page" data-id="${escapeHtml(p.ID)}">PURGE</button>
                     </td>
                   </tr>
                 `).join('')}
@@ -75,7 +75,7 @@ const PagesView = {
         App.openModal(`
           <div class="dl-modal-header">
             <h3 style="font-size: 1.25rem;">NEW STATIC PAGE</h3>
-            <button class="dl-modal-close" onclick="App.closeModal()">✕</button>
+            <button class="dl-modal-close" type="button" data-close-modal>✕</button>
           </div>
           <div class="dl-form-group">
             <label class="dl-label">Page Title</label>
@@ -90,7 +90,7 @@ const PagesView = {
             <textarea id="modal-page-content" class="dl-textarea" style="min-height: 140px;" placeholder="Compose initial page manifesto or information..."></textarea>
           </div>
           <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
-            <button class="dl-btn dl-btn-outline dl-btn-sm" onclick="App.closeModal()">CANCEL</button>
+            <button class="dl-btn dl-btn-outline dl-btn-sm" type="button" data-close-modal>CANCEL</button>
             <button id="btn-modal-save-page" class="dl-btn dl-btn-accent dl-btn-sm">⚡ CREATE & PUBLISH PAGE</button>
           </div>
         `);
@@ -124,7 +124,7 @@ const PagesView = {
         btn.addEventListener('click', async () => {
           if (confirm('Permanently purge this page?')) {
             try {
-              await API.del(`/api/v1/posts/${btn.dataset.id}`);
+              await API.del(`/api/v1/posts/${encodeURIComponent(btn.dataset.id)}`);
               App.showToast('Page purged.');
               this.render(container);
             } catch (e) {
@@ -135,7 +135,7 @@ const PagesView = {
       });
 
     } catch (err) {
-      container.innerHTML = `<div class="dl-admin-content"><div class="dl-card" style="border-color: var(--dl-crimson);">Pages error: ${err.message}</div></div>`;
+      container.innerHTML = `<div class="dl-admin-content"><div class="dl-card" style="border-color: var(--dl-crimson);">Pages error: ${escapeHtml(err.message)}</div></div>`;
     }
   }
 };

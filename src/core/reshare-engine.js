@@ -1,10 +1,17 @@
 const crypto = require('crypto');
+const config = require('../config');
 const { getDb, getOption } = require('./db');
+const { renderContent, renderExcerpt } = require('./content-renderer');
+const provenanceCore = require('./provenance');
 const hooks = require('./hooks');
 
 /**
  * Deadletters Resharing & Mesh Federation Engine
  * Deadplug Digital Atelier Specification v1.0
+ *
+ * New re-letters are signed with the node's local Ed25519 identity envelope.
+ * The HMAC helpers below remain only so pre-envelope records can still be
+ * verified; new rows must never be HMAC-signed.
  */
 
 function generateDropCode(prefix = 'DL') {
@@ -13,12 +20,33 @@ function generateDropCode(prefix = 'DL') {
   return `${prefix}-${year}-${hex}`;
 }
 
-function generateSignature(payload, secret = 'deadplug-node-secret') {
+function generateSignature(payload, secret = config.provenanceSecret) {
   return crypto.createHmac('sha256', secret).update(JSON.stringify(payload)).digest('hex');
 }
 
+function getSignaturePayload({ sourceUrl, originalAuthor, originalTitle, provenance }) {
+  return { sourceUrl, originalAuthor, originalTitle, provenance };
+}
+
+function verifySignature(payload, signature) {
+  if (typeof signature !== 'string' || !/^[a-f0-9]{64}$/i.test(signature)) return false;
+  const expected = generateSignature(payload);
+  return crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(signature, 'hex'));
+}
+
+function fail(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+function cleanText(value, fallback, maximumLength) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return (text || fallback).slice(0, maximumLength);
+}
+
 /**
- * Create a Reshare (Re-letter)
+ * Create a Reshare (Re-letter) and its local integrity envelope atomically.
  */
 function createReshare({
   userId,
@@ -32,100 +60,178 @@ function createReshare({
   featuredImage = null
 }) {
   const db = getDb();
+  if (String(getOption('reshares_enabled', '1')) === '0') {
+    throw fail(403, 'Re-letters are disabled on this node.');
+  }
 
-  // If local post, resolve details
   let targetPost = null;
+  let parentReshare = null;
   if (sourcePostId) {
     targetPost = db.prepare('SELECT * FROM dl_posts WHERE ID = ?').get(sourcePostId);
-    if (targetPost) {
-      originalAuthor = db.prepare('SELECT display_name FROM dl_users WHERE ID = ?').get(targetPost.post_author)?.display_name || 'Deadplug Collective';
-      originalTitle = targetPost.post_title;
-      originalExcerpt = targetPost.post_excerpt || targetPost.post_content.substring(0, 160) + '...';
+    if (!targetPost) throw fail(404, 'Source letter not found.');
+    if (targetPost.post_status !== 'publish') throw fail(403, 'Only published source letters can be re-lettered.');
+
+    if (targetPost.post_type === 'reshare') {
+      parentReshare = db.prepare('SELECT * FROM dl_reshares WHERE post_id = ?').get(targetPost.ID) || null;
+    }
+
+    if (parentReshare) {
+      // Re-lettering a re-letter must retain the original source metadata rather
+      // than replacing it with the intermediate reshare post's wrapper fields.
+      originalAuthor = parentReshare.original_author;
+      originalTitle = parentReshare.original_title;
+      originalExcerpt = parentReshare.original_excerpt;
+      sourceUrl = parentReshare.source_url;
+      sourceNode = parentReshare.source_node;
       if (!featuredImage) featuredImage = targetPost.featured_image;
+    } else {
+      originalAuthor = db.prepare('SELECT display_name FROM dl_users WHERE ID = ?')
+        .get(targetPost.post_author)?.display_name || 'Deadplug Collective';
+      originalTitle = targetPost.post_title;
+      originalExcerpt = targetPost.post_excerpt || targetPost.post_content.substring(0, 160);
+      if (!featuredImage) featuredImage = targetPost.featured_image;
+      if (!sourceUrl) sourceUrl = `${getOption('site_url', 'http://localhost:3000')}/letter/${targetPost.post_name}`;
     }
   }
 
-  const dropCode = generateDropCode('RESHARE');
-  const slug = `reshare-${Date.now().toString(36)}-${crypto.randomBytes(2).toString('hex')}`;
+  if (sourceUrl) {
+    try {
+      const parsed = new URL(sourceUrl);
+      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error();
+      sourceUrl = parsed.href;
+    } catch {
+      throw fail(400, 'Source URL must be a public HTTP(S) URL without credentials.');
+    }
+  }
 
-  const provenance = [
-    {
+  originalAuthor = cleanText(originalAuthor, 'Unknown Operator', 300);
+  originalTitle = cleanText(originalTitle, 'Untitled Letter', 500);
+  originalExcerpt = cleanText(originalExcerpt, '', 2000);
+  curatorCommentary = cleanText(curatorCommentary, '', 100000);
+  sourceNode = cleanText(sourceNode, 'external-web', 500);
+
+  let provenance = [];
+  if (parentReshare) {
+    try {
+      const parsed = JSON.parse(parentReshare.provenance_chain || '[]');
+      if (Array.isArray(parsed)) provenance = parsed;
+    } catch {}
+  }
+  if (provenance.length === 0) {
+    provenance.push({
       action: 'original_drop',
       author: originalAuthor,
       node: sourceNode,
       timestamp: targetPost ? targetPost.post_date : new Date().toISOString()
-    },
-    {
-      action: 're_lettered',
-      curator_id: userId,
-      node: getOption('site_node_handle', '@deadplug/main-node'),
-      commentary: curatorCommentary,
-      timestamp: new Date().toISOString()
-    }
-  ];
-
-  const signature = generateSignature({ sourceUrl, originalAuthor, originalTitle, provenance });
-
-  // 1. Create post entry in dl_posts
-  const title = `Reshare: ${originalTitle}`;
-  const insertPost = db.prepare(`
-    INSERT INTO dl_posts (
-      post_author, post_title, post_name, post_content, post_excerpt,
-      post_type, post_status, drop_code, content_format, featured_image
-    ) VALUES (?, ?, ?, ?, ?, 'reshare', 'publish', ?, 'reshare', ?)
-  `);
-
-  const result = insertPost.run(
-    userId,
-    title,
-    slug,
-    curatorCommentary,
-    curatorCommentary.substring(0, 180),
-    dropCode,
-    featuredImage
-  );
-
-  const newPostId = result.lastInsertRowid;
-
-  // 2. Insert into dl_reshares
-  const insertReshare = db.prepare(`
-    INSERT INTO dl_reshares (
-      post_id, source_post_id, source_url, source_node, original_author,
-      original_title, original_excerpt, curator_commentary, provenance_chain, signature
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  insertReshare.run(
-    newPostId,
-    sourcePostId,
-    sourceUrl,
-    sourceNode,
-    originalAuthor,
-    originalTitle,
-    originalExcerpt,
-    curatorCommentary,
-    JSON.stringify(provenance),
-    signature
-  );
-
-  // 3. Increment reshare count on original if local
-  if (sourcePostId) {
-    db.prepare('UPDATE dl_posts SET reshare_count = reshare_count + 1 WHERE ID = ?').run(sourcePostId);
+    });
   }
 
-  const reshareRecord = {
-    id: newPostId,
-    dropCode,
-    title,
-    slug,
-    originalTitle,
-    originalAuthor,
-    curatorCommentary,
-    provenance,
-    signature
-  };
+  // Ensure the identity exists before opening the post/reshare transaction.
+  const signingIdentity = provenanceCore.getPublicNodeIdentity();
+  const signedAt = new Date().toISOString();
+  provenance.push({
+    action: 're_lettered',
+    curator_id: userId,
+    node: signingIdentity.handle,
+    commentary: curatorCommentary,
+    timestamp: signedAt
+  });
 
-  hooks.doAction('post_reshared', reshareRecord);
+  const source = {
+    url: sourceUrl || null,
+    node: sourceNode,
+    author: originalAuthor,
+    title: originalTitle,
+    excerpt: originalExcerpt
+  };
+  let localSourcePostId = sourcePostId;
+  if (parentReshare) {
+    if (parentReshare.envelope_json) {
+      // Carry the original local post id across generations. An external-only
+      // source has no local post id and must not gain a reshare post id.
+      let inheritedLocalPostId = null;
+      try {
+        inheritedLocalPostId = JSON.parse(parentReshare.envelope_json)?.source?.local_post_id ?? null;
+      } catch {}
+      localSourcePostId = Number.isInteger(inheritedLocalPostId) ? inheritedLocalPostId : null;
+    } else {
+      // Legacy parent: its immediate source id is the best available hint.
+      localSourcePostId = parentReshare.source_post_id;
+    }
+  }
+  if (Number.isInteger(localSourcePostId) && localSourcePostId > 0) {
+    source.local_post_id = localSourcePostId;
+  }
+
+  const signed = provenanceCore.createSignedEnvelope({
+    source,
+    curator: {
+      id: userId,
+      commentary: curatorCommentary
+    },
+    createdAt: signedAt,
+    parentEnvelopeHash: parentReshare?.envelope_hash || null,
+    provenanceChain: provenance
+  });
+
+  const dropCode = generateDropCode('RESHARE');
+  const slug = `reshare-${Date.now().toString(36)}-${crypto.randomBytes(2).toString('hex')}`;
+  const title = `Reshare: ${originalTitle}`;
+
+  const insertAtomically = db.transaction(() => {
+    const result = db.prepare(`
+      INSERT INTO dl_posts (
+        post_author, post_title, post_name, post_content, post_excerpt,
+        post_type, post_status, drop_code, content_format, featured_image
+      ) VALUES (?, ?, ?, ?, ?, 'reshare', 'publish', ?, 'reshare', ?)
+    `).run(userId, title, slug, curatorCommentary, originalExcerpt.slice(0, 180), dropCode, featuredImage || null);
+
+    const newPostId = result.lastInsertRowid;
+    db.prepare(`
+      INSERT INTO dl_reshares (
+        post_id, source_post_id, source_url, source_node, original_author,
+        original_title, original_excerpt, curator_commentary, provenance_chain,
+        envelope_json, envelope_hash, envelope_signature, signature_algorithm,
+        signing_key_id, parent_envelope_hash, signed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      newPostId, sourcePostId || null, sourceUrl || null, sourceNode, originalAuthor,
+      originalTitle, originalExcerpt, curatorCommentary, JSON.stringify(provenance),
+      signed.envelope_json, signed.envelope_hash, signed.envelope_signature,
+      signed.signature_algorithm, signed.signing_key_id,
+      signed.envelope.parent_envelope_hash, signed.signed_at
+    );
+
+    if (sourcePostId) {
+      db.prepare('UPDATE dl_posts SET reshare_count = reshare_count + 1 WHERE ID = ?').run(sourcePostId);
+    }
+
+    return {
+      id: newPostId,
+      dropCode,
+      title,
+      slug,
+      originalTitle,
+      originalAuthor,
+      curatorCommentary,
+      provenance,
+      signature: null,
+      envelope_hash: signed.envelope_hash,
+      envelope_signature: signed.envelope_signature,
+      signature_algorithm: signed.signature_algorithm,
+      signing_key_id: signed.signing_key_id,
+      parent_envelope_hash: signed.envelope.parent_envelope_hash,
+      signed_at: signed.signed_at
+    };
+  });
+
+  const reshareRecord = insertAtomically();
+  // Legacy hooks expect a non-null `signature` string. Give them the Ed25519
+  // envelope signature without changing the stored row (which has no HMAC).
+  hooks.doAction('post_reshared', {
+    ...reshareRecord,
+    signature: reshareRecord.envelope_signature || ''
+  });
   return reshareRecord;
 }
 
@@ -187,7 +293,7 @@ function generateRssFeed() {
       <guid isPermaLink="true">${escapeXml(postLink)}</guid>
       <pubDate>${new Date(p.post_date).toUTCString()}</pubDate>
       <author>${escapeXml(p.author_name)}</author>
-      <description><![CDATA[${p.post_excerpt || p.post_content.substring(0, 240)}]]></description>
+      <description>${escapeXml(p.post_excerpt || renderExcerpt(p.post_content, 240))}</description>
       <deadletters:dropCode>${escapeXml(p.drop_code || '')}</deadletters:dropCode>
       <deadletters:type>${escapeXml(p.post_type)}</deadletters:type>
     </item>
@@ -232,7 +338,7 @@ function generateJsonFeed() {
       id: `${siteUrl}/letter/${p.post_name}`,
       url: `${siteUrl}/letter/${p.post_name}`,
       title: p.post_title,
-      content_html: p.post_content,
+      content_html: renderContent(p.post_content),
       summary: p.post_excerpt,
       image: p.featured_image,
       date_published: new Date(p.post_date).toISOString(),
@@ -265,6 +371,8 @@ function escapeXml(unsafe) {
 module.exports = {
   generateDropCode,
   generateSignature,
+  verifySignature,
+  getSignaturePayload,
   createReshare,
   getReshareStream,
   generateRssFeed,

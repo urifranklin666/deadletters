@@ -10,6 +10,9 @@ yarn-error.log*
 *.db-wal
 src/content/data/*.db*
 src/content/data/*.zip
+src/content/data/config.json
+src/content/data/temp_uploads/
+src/content/data/*.tmp
 
 # Environment & local secrets
 .env

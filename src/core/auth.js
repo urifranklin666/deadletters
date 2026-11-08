@@ -20,16 +20,17 @@ function signToken(user) {
       login: user.user_login,
       email: user.user_email,
       role: user.role,
-      displayName: user.display_name
+      displayName: user.display_name,
+      tokenVersion: user.token_version || 0
     },
     config.jwtSecret,
-    { expiresIn: '30d' }
+    { expiresIn: config.tokenTtl, issuer: 'deadletters', audience: 'deadletters-api' }
   );
 }
 
 function verifyToken(token) {
   try {
-    return jwt.verify(token, config.jwtSecret);
+    return jwt.verify(token, config.jwtSecret, { issuer: 'deadletters', audience: 'deadletters-api' });
   } catch {
     return null;
   }
@@ -42,7 +43,7 @@ function findUserByLoginOrEmail(identifier) {
 
 function findUserById(id) {
   const db = getDb();
-  return db.prepare('SELECT ID, user_login, user_nicename, user_email, user_url, user_registered, display_name, role, avatar_url, bio FROM dl_users WHERE ID = ?').get(id);
+  return db.prepare('SELECT ID, user_login, user_nicename, user_email, user_url, user_registered, display_name, role, token_version, avatar_url, bio FROM dl_users WHERE ID = ?').get(id);
 }
 
 // Express Auth Middleware
@@ -52,8 +53,6 @@ function requireAuth(req, res, next) {
 
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.substring(7);
-  } else if (req.cookies && req.cookies.deadletters_token) {
-    token = req.cookies.deadletters_token;
   }
 
   if (!token) {
@@ -66,8 +65,8 @@ function requireAuth(req, res, next) {
   }
 
   const user = findUserById(payload.id);
-  if (!user) {
-    return res.status(401).json({ error: 'User associated with token no longer exists.' });
+  if (!user || payload.tokenVersion !== (user.token_version || 0)) {
+    return res.status(401).json({ error: 'Session is no longer valid. Please authenticate again.' });
   }
 
   req.user = user;
@@ -80,14 +79,15 @@ function optionalAuth(req, res, next) {
 
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.substring(7);
-  } else if (req.cookies && req.cookies.deadletters_token) {
-    token = req.cookies.deadletters_token;
   }
 
   if (token) {
     const payload = verifyToken(token);
     if (payload) {
-      req.user = findUserById(payload.id);
+      const user = findUserById(payload.id);
+      if (user && payload.tokenVersion === (user.token_version || 0)) {
+        req.user = user;
+      }
     }
   }
   next();

@@ -1,14 +1,10 @@
 {
   "slug": "deadletter-mesh",
-  "name": "Deadletter P2P Mesh & Syndicator",
-  "version": "1.2.0",
+  "name": "Deadletter Node Identity Compatibility",
+  "version": "2.0.0",
   "author": "deadplug.digital",
-  "description": "Federation protocol for Deadletters nodes. Synchronizes re-letters, signs cryptographic provenance envelopes, and pings subscribed nodes upon new drops.",
+  "description": "Compatibility metadata for node identity. Signed peer delivery is implemented by the core federation service, not by this addon.",
   "entry": "index.js",
   "is_active": 1,
-  "settings": {
-    "auto_ping_peers": true,
-    "require_signatures": true,
-    "peer_relays": ["https://mesh.deadplug.digital/relay", "https://tokyo.deadletters.network/relay"]
-  }
+  "settings": {}
 }

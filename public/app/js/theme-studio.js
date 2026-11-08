@@ -35,7 +35,7 @@ const ThemeStudio = {
           <div class="dl-themes-grid">
             ${themes.map(t => `
               <div class="dl-theme-card ${t.isActive ? 'active' : ''}">
-                <img src="${t.preview_image || '/uploads/deadplug_editorial_cover.jpg'}" class="dl-theme-preview" />
+                <img src="${escapeHtml(safeUrl(t.preview_image, '/uploads/deadplug_editorial_cover.jpg'))}" class="dl-theme-preview" />
                 <div class="dl-theme-body">
                   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
                     <div class="dl-theme-name">${escapeHtml(t.name)}</div>
@@ -45,7 +45,7 @@ const ThemeStudio = {
                   <div style="display: flex; justify-content: space-between; align-items: center;">
                     <span style="font-family: var(--dl-font-mono); font-size: 0.7rem; color: var(--dl-text-faint);">by ${escapeHtml(t.author || 'deadplug.digital')}</span>
                     ${!t.isActive ? `
-                      <button class="dl-btn dl-btn-accent dl-btn-sm btn-activate-theme" data-slug="${t.slug}">ACTIVATE</button>
+                      <button class="dl-btn dl-btn-accent dl-btn-sm btn-activate-theme" data-slug="${escapeHtml(t.slug)}">ACTIVATE</button>
                     ` : `
                       <span style="font-family: var(--dl-font-mono); font-size: 0.75rem; color: var(--dl-accent);">CURRENTLY APPLIED</span>
                     `}
@@ -58,7 +58,7 @@ const ThemeStudio = {
           <!-- Live Design Token Customizer -->
           <div class="dl-card" style="margin-top: 2rem;">
             <div class="dl-box-title" style="display: flex; justify-content: space-between; align-items: center;">
-              <span>// LIVE DESIGN TOKENS // ${active.name || active.slug}</span>
+              <span>// LIVE DESIGN TOKENS // ${escapeHtml(active.name || active.slug)}</span>
               <button id="btn-save-tokens" class="dl-btn dl-btn-accent dl-btn-sm">⚡ SYNC & COMMIT TOKENS</button>
             </div>
 
@@ -68,8 +68,8 @@ const ThemeStudio = {
                 <div class="dl-form-group">
                   <label class="dl-label">Accent Brand Color</label>
                   <div style="display: flex; gap: 0.75rem; align-items: center;">
-                    <input type="color" id="token-accent-color" value="${tokens.accent_color || '#D6FF00'}" style="width: 50px; height: 38px; border: 1px solid var(--dl-border); background: transparent; cursor: pointer;" />
-                    <input type="text" id="token-accent-hex" class="dl-input" value="${tokens.accent_color || '#D6FF00'}" style="width: 140px; font-family: var(--dl-font-mono);" />
+                    <input type="color" id="token-accent-color" value="${escapeHtml(tokens.accent_color || '#D6FF00')}" style="width: 50px; height: 38px; border: 1px solid var(--dl-border); background: transparent; cursor: pointer;" />
+                    <input type="text" id="token-accent-hex" class="dl-input" value="${escapeHtml(tokens.accent_color || '#D6FF00')}" style="width: 140px; font-family: var(--dl-font-mono);" />
                     <!-- Preset swatches -->
                     <div style="display: flex; gap: 6px;">
                       <span class="color-swatch" data-hex="#D6FF00" style="width: 24px; height: 24px; background: #D6FF00; cursor: pointer; border: 1px solid #333;" title="Acid Lime"></span>
@@ -83,8 +83,8 @@ const ThemeStudio = {
 
                 <!-- Border Radius -->
                 <div class="dl-form-group">
-                  <label class="dl-label">Border Radius: <span id="radius-val">${tokens.border_radius || '0px'}</span></label>
-                  <input type="range" id="token-radius" min="0" max="16" step="2" value="${parseInt(tokens.border_radius || '0', 10)}" style="accent-color: var(--dl-accent); width: 100%;" />
+                  <label class="dl-label">Border Radius: <span id="radius-val">${escapeHtml(tokens.border_radius || '0px')}</span></label>
+                  <input type="range" id="token-radius" min="0" max="16" step="2" value="${escapeHtml(parseInt(tokens.border_radius || '0', 10))}" style="accent-color: var(--dl-accent); width: 100%;" />
                 </div>
 
                 <!-- Font Heading -->
@@ -113,7 +113,7 @@ const ThemeStudio = {
 
       this.bindThemeEvents(container, active);
     } catch (err) {
-      container.innerHTML = `<div class="dl-admin-content"><div class="dl-card" style="border-color: var(--dl-crimson);">Theme studio error: ${err.message}</div></div>`;
+      container.innerHTML = `<div class="dl-admin-content"><div class="dl-card" style="border-color: var(--dl-crimson);">Theme studio error: ${escapeHtml(err.message)}</div></div>`;
     }
   },
 
@@ -123,8 +123,8 @@ const ThemeStudio = {
       btn.addEventListener('click', async () => {
         try {
           await API.post('/api/v1/themes/activate', { slug: btn.dataset.slug });
+          await App.loadActiveTheme();
           App.showToast(`Theme activated: ${btn.dataset.slug}`);
-          App.applyThemeTokens(btn.dataset.slug);
           this.render(container);
         } catch (e) {
           alert('Activation failed: ' + e.message);
@@ -174,7 +174,7 @@ const ThemeStudio = {
       const customCss = container.querySelector('#token-custom-css').value;
 
       try {
-        await API.post(`/api/v1/themes/tokens/${active.slug}`, { tokens, customCss });
+        await API.post(`/api/v1/themes/tokens/${encodeURIComponent(active.slug)}`, { tokens, customCss });
         App.showToast('Theme tokens saved & synchronized.');
       } catch (e) {
         alert('Save failed: ' + e.message);

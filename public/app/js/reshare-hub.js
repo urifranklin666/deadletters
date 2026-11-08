@@ -13,17 +13,18 @@ const ReshareHub = {
 
       const reshares = streamRes.reshares || [];
       const posts = postsRes.posts || [];
+      const canReshare = App.can('reshares:create');
 
       container.innerHTML = `
         <div class="dl-admin-content">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem;">
             <div>
               <div style="font-family: var(--dl-font-mono); font-size: 0.72rem; color: var(--dl-accent); letter-spacing: 0.12em; margin-bottom: 0.4rem;">
-                // ATELIER FEDERATION PROTOCOL //
+                // LOCAL NODE PROVENANCE PROTOCOL //
               </div>
-              <h2 style="font-size: 1.8rem; font-weight: 800;">RESHARE & SYNDICATION HUB</h2>
+              <h2 style="font-size: 1.8rem; font-weight: 800;">RESHARE & PROVENANCE HUB</h2>
             </div>
-            <button id="btn-toggle-composer" class="dl-btn dl-btn-accent">+ COMPOSE RE-LETTER</button>
+            ${canReshare ? '<button id="btn-toggle-composer" class="dl-btn dl-btn-accent">+ COMPOSE RE-LETTER</button>' : ''}
           </div>
 
           <!-- Composer Box (Collapsible) -->
@@ -45,8 +46,8 @@ const ReshareHub = {
               <select id="select-local-post" class="dl-select">
                 <option value="">-- Choose local transmission to quote --</option>
                 ${posts.map(p => `
-                  <option value="${p.ID}" data-title="${escapeHtml(p.post_title)}" data-author="${escapeHtml(p.author_name)}" data-excerpt="${escapeHtml(p.post_excerpt || '')}" data-img="${p.featured_image || ''}">
-                    ${p.drop_code || 'DL'} // ${escapeHtml(p.post_title)} (by ${escapeHtml(p.author_name)})
+                  <option value="${escapeHtml(p.ID)}" data-title="${escapeHtml(p.post_title)}" data-author="${escapeHtml(p.author_name)}" data-excerpt="${escapeHtml(p.post_excerpt || '')}" data-img="${escapeHtml(safeUrl(p.featured_image))}">
+                    ${escapeHtml(p.drop_code || 'DL')} // ${escapeHtml(p.post_title)} (by ${escapeHtml(p.author_name)})
                   </option>
                 `).join('')}
               </select>
@@ -78,7 +79,7 @@ const ReshareHub = {
             </div>
 
             <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
-              <button id="btn-broadcast-reshare" class="dl-btn dl-btn-accent">⚡ SIGN & BROADCAST RE-LETTER</button>
+              <button id="btn-broadcast-reshare" class="dl-btn dl-btn-accent">⚡ SIGN RE-LETTER</button>
             </div>
           </div>
 
@@ -92,16 +93,18 @@ const ReshareHub = {
               <article class="dl-reshare-card">
                 <div class="dl-reshare-header">
                   <div class="dl-curator-info">
-                    <img src="${r.curator_avatar || '/uploads/deadplug_operator_avatar.jpg'}" class="dl-avatar" />
+                    <img src="${escapeHtml(safeUrl(r.curator_avatar, '/uploads/deadplug_operator_avatar.jpg'))}" class="dl-avatar" />
                     <div>
                       <div class="dl-curator-name">${escapeHtml(r.curator_name || 'Operator')}</div>
-                      <div class="dl-curator-node">// RE-LETTERED ON ${new Date(r.created_at).toLocaleDateString()}</div>
+                      <div class="dl-curator-node">// RE-LETTERED ON ${escapeHtml(new Date(r.created_at).toLocaleDateString())}</div>
                     </div>
                   </div>
                   <div style="display: flex; align-items: center; gap: 0.5rem;">
-                    <span class="dl-badge dl-badge-cyan">PROVENANCE VERIFIED</span>
-                    <button class="dl-btn dl-btn-ghost dl-btn-sm btn-inspect-sig" data-id="${r.reshare_id}" data-sig="${r.signature || ''}" data-chain='${escapeHtml(JSON.stringify(r.provenance_chain || []))}'>
-                      INSPECT SIG
+                    <span class="dl-badge provenance-badge" data-reshare-id="${escapeHtml(r.reshare_id)}">
+                      ${r.envelope_signature ? 'ED25519 ENVELOPE STORED' : (r.signature ? 'LEGACY HMAC STORED' : 'NO SIGNATURE')}
+                    </span>
+                    <button class="dl-btn dl-btn-ghost dl-btn-sm btn-inspect-sig" data-id="${escapeHtml(r.reshare_id)}" data-sig="${escapeHtml(r.envelope_signature || r.signature || '')}" data-chain="${escapeHtml(JSON.stringify(r.provenance_chain || []))}">
+                      VERIFY ENVELOPE
                     </button>
                   </div>
                 </div>
@@ -118,7 +121,7 @@ const ReshareHub = {
                       <span>AUTHOR: ${escapeHtml(r.original_author)}</span>
                     </div>
                     <div class="dl-quoted-title">
-                      <a href="#/letter/${r.post_name}">${escapeHtml(r.original_title)}</a>
+                      <a href="#/letter/${escapeHtml(encodeURIComponent(r.post_name || ''))}">${escapeHtml(r.original_title)}</a>
                     </div>
                     <div class="dl-quoted-excerpt">
                       ${escapeHtml(r.original_excerpt)}
@@ -127,8 +130,8 @@ const ReshareHub = {
                 </div>
 
                 <div class="dl-provenance-bar">
-                  <span>SIG HASH: ${r.signature ? r.signature.substring(0, 24) : 'DP-HASH-NIL'}...</span>
-                  <span>RELAY HOPS: ${(r.provenance_chain || []).length} NODES</span>
+                  <span>${r.envelope_hash ? `ENVELOPE: ${escapeHtml(String(r.envelope_hash).substring(0, 20))}...` : (r.signature ? 'LEGACY HMAC RECORD' : 'NO SIG RECORD')}</span>
+                  <span>CHAIN ENTRIES: ${(r.provenance_chain || []).length}</span>
                 </div>
               </article>
             `).join('')}
@@ -138,7 +141,7 @@ const ReshareHub = {
 
       this.bindReshareEvents(container, posts);
     } catch (err) {
-      container.innerHTML = `<div class="dl-admin-content"><div class="dl-card" style="border-color: var(--dl-crimson);">Error loading reshare hub: ${err.message}</div></div>`;
+      container.innerHTML = `<div class="dl-admin-content"><div class="dl-card" style="border-color: var(--dl-crimson);">Error loading reshare hub: ${escapeHtml(err.message)}</div></div>`;
     }
   },
 
@@ -168,124 +171,178 @@ const ReshareHub = {
       featuredImage: null
     };
 
-    toggleBtn.addEventListener('click', () => {
-      composerBox.style.display = composerBox.style.display === 'none' ? 'block' : 'none';
-    });
+    if (toggleBtn && composerBox) {
+      toggleBtn.addEventListener('click', () => {
+        composerBox.style.display = composerBox.style.display === 'none' ? 'block' : 'none';
+      });
 
-    closeBtn.addEventListener('click', () => {
-      composerBox.style.display = 'none';
-    });
+      closeBtn.addEventListener('click', () => {
+        composerBox.style.display = 'none';
+      });
 
-    tabLocal.addEventListener('click', () => {
-      tabLocal.className = 'dl-btn dl-btn-accent dl-btn-sm';
-      tabRemote.className = 'dl-btn dl-btn-outline dl-btn-sm';
-      localPane.style.display = 'block';
-      remotePane.style.display = 'none';
-    });
+      tabLocal.addEventListener('click', () => {
+        tabLocal.className = 'dl-btn dl-btn-accent dl-btn-sm';
+        tabRemote.className = 'dl-btn dl-btn-outline dl-btn-sm';
+        localPane.style.display = 'block';
+        remotePane.style.display = 'none';
+      });
 
-    tabRemote.addEventListener('click', () => {
-      tabRemote.className = 'dl-btn dl-btn-accent dl-btn-sm';
-      tabLocal.className = 'dl-btn dl-btn-outline dl-btn-sm';
-      localPane.style.display = 'none';
-      remotePane.style.display = 'block';
-    });
+      tabRemote.addEventListener('click', () => {
+        tabRemote.className = 'dl-btn dl-btn-accent dl-btn-sm';
+        tabLocal.className = 'dl-btn dl-btn-outline dl-btn-sm';
+        localPane.style.display = 'none';
+        remotePane.style.display = 'block';
+      });
 
-    selectLocal.addEventListener('change', () => {
-      const opt = selectLocal.selectedOptions[0];
-      if (!opt || !opt.value) {
-        previewPane.style.display = 'none';
-        return;
-      }
-      stagedReshare.sourcePostId = opt.value;
-      stagedReshare.sourceUrl = null;
-      stagedReshare.sourceNode = 'deadplug://local';
-      stagedReshare.originalTitle = opt.dataset.title;
-      stagedReshare.originalAuthor = opt.dataset.author;
-      stagedReshare.originalExcerpt = opt.dataset.excerpt;
-      stagedReshare.featuredImage = opt.dataset.img;
-
-      previewTitle.innerText = stagedReshare.originalTitle;
-      previewAuthor.innerText = `by ${stagedReshare.originalAuthor}`;
-      previewExcerpt.innerText = stagedReshare.originalExcerpt;
-      previewPane.style.display = 'block';
-    });
-
-    // Remote meta fetch
-    const fetchBtn = container.querySelector('#btn-fetch-meta');
-    fetchBtn.addEventListener('click', async () => {
-      const url = container.querySelector('#input-external-url').value.trim();
-      if (!url) return alert('Enter a URL.');
-      fetchBtn.disabled = true;
-      fetchBtn.innerText = 'FETCHING...';
-      try {
-        const res = await API.post('/api/v1/reshares/import-external', { url });
-        const d = res.data;
-        stagedReshare.sourcePostId = null;
-        stagedReshare.sourceUrl = d.sourceUrl;
-        stagedReshare.sourceNode = d.sourceNode;
-        stagedReshare.originalTitle = d.originalTitle;
-        stagedReshare.originalAuthor = d.originalAuthor;
-        stagedReshare.originalExcerpt = d.originalExcerpt;
-        stagedReshare.featuredImage = d.featuredImage;
+      selectLocal.addEventListener('change', () => {
+        const opt = selectLocal.selectedOptions[0];
+        if (!opt || !opt.value) {
+          previewPane.style.display = 'none';
+          return;
+        }
+        stagedReshare.sourcePostId = opt.value;
+        stagedReshare.sourceUrl = null;
+        stagedReshare.sourceNode = 'deadplug://local';
+        stagedReshare.originalTitle = opt.dataset.title;
+        stagedReshare.originalAuthor = opt.dataset.author;
+        stagedReshare.originalExcerpt = opt.dataset.excerpt;
+        stagedReshare.featuredImage = opt.dataset.img;
 
         previewTitle.innerText = stagedReshare.originalTitle;
         previewAuthor.innerText = `by ${stagedReshare.originalAuthor}`;
         previewExcerpt.innerText = stagedReshare.originalExcerpt;
         previewPane.style.display = 'block';
-        App.showToast('External transmission metadata pulled.');
-      } catch (e) {
-        alert('Could not fetch URL: ' + e.message);
-      } finally {
-        fetchBtn.disabled = false;
-        fetchBtn.innerText = '⚡ FETCH META';
-      }
-    });
+      });
 
-    // Broadcast Reshare
-    broadcastBtn.addEventListener('click', async () => {
-      const commentary = commentaryInput.value.trim();
-      if (!commentary) {
-        alert('Curator commentary cannot be empty.');
-        return;
-      }
-      if (!stagedReshare.sourcePostId && !stagedReshare.sourceUrl) {
-        alert('Select or input a source letter to re-letter.');
-        return;
-      }
+      // Remote meta fetch
+      const fetchBtn = container.querySelector('#btn-fetch-meta');
+      fetchBtn.addEventListener('click', async () => {
+        const url = container.querySelector('#input-external-url').value.trim();
+        if (!url) return alert('Enter a URL.');
+        fetchBtn.disabled = true;
+        fetchBtn.innerText = 'FETCHING...';
+        try {
+          const res = await API.post('/api/v1/reshares/import-external', { url });
+          const d = res.data;
+          stagedReshare.sourcePostId = null;
+          stagedReshare.sourceUrl = d.sourceUrl;
+          stagedReshare.sourceNode = d.sourceNode;
+          stagedReshare.originalTitle = d.originalTitle;
+          stagedReshare.originalAuthor = d.originalAuthor;
+          stagedReshare.originalExcerpt = d.originalExcerpt;
+          stagedReshare.featuredImage = d.featuredImage;
 
-      broadcastBtn.disabled = true;
-      broadcastBtn.innerText = '⚡ SIGNING & BROADCASTING...';
+          previewTitle.innerText = stagedReshare.originalTitle;
+          previewAuthor.innerText = `by ${stagedReshare.originalAuthor}`;
+          previewExcerpt.innerText = stagedReshare.originalExcerpt;
+          previewPane.style.display = 'block';
+          App.showToast('External transmission metadata pulled.');
+        } catch (e) {
+          alert('Could not fetch URL: ' + e.message);
+        } finally {
+          fetchBtn.disabled = false;
+          fetchBtn.innerText = '⚡ FETCH META';
+        }
+      });
 
-      try {
-        await API.post('/api/v1/reshares', {
-          ...stagedReshare,
-          curatorCommentary: commentary
-        });
-        App.showToast('Re-letter successfully dropped into mesh.');
-        this.render(container);
-      } catch (err) {
-        alert('Reshare broadcast failed: ' + err.message);
-        broadcastBtn.disabled = false;
-        broadcastBtn.innerText = '⚡ SIGN & BROADCAST RE-LETTER';
-      }
-    });
+      // Broadcast Reshare
+      broadcastBtn.addEventListener('click', async () => {
+        const commentary = commentaryInput.value.trim();
+        if (!commentary) {
+          alert('Curator commentary cannot be empty.');
+          return;
+        }
+        if (!stagedReshare.sourcePostId && !stagedReshare.sourceUrl) {
+          alert('Select or input a source letter to re-letter.');
+          return;
+        }
 
-    // Inspect Signature Modal
+        broadcastBtn.disabled = true;
+        broadcastBtn.innerText = '⚡ SIGNING ENVELOPE...';
+
+        try {
+          await API.post('/api/v1/reshares', {
+            ...stagedReshare,
+            curatorCommentary: commentary
+          });
+          App.showToast('Re-letter recorded on this local node.');
+          this.render(container);
+        } catch (err) {
+          alert('Reshare broadcast failed: ' + err.message);
+          broadcastBtn.disabled = false;
+          broadcastBtn.innerText = '⚡ SIGN RE-LETTER';
+        }
+      });
+    }
+
+    // Inspect Signature Modal. Verification is requested only when the operator
+    // explicitly opens a record, and the badge reflects that fetched result.
     container.querySelectorAll('.btn-inspect-sig').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const chain = JSON.parse(btn.dataset.chain || '[]');
+      btn.addEventListener('click', async () => {
+        let chain = [];
+        try {
+          chain = JSON.parse(btn.dataset.chain || '[]');
+        } catch {}
+
+        let verification = null;
+        try {
+          verification = await API.get(`/api/v1/reshares/provenance/${encodeURIComponent(btn.dataset.id)}`);
+        } catch {}
+
+        const scope = verification?.verification_scope || 'unavailable';
+        const verificationStatus = verification?.verification_status;
+        const status = !verification
+          ? { label: 'VERIFICATION UNAVAILABLE', color: 'var(--dl-text-muted)' }
+          : scope === 'deadletters-ed25519-v1'
+            ? (verificationStatus === 'verified'
+              ? { label: 'NODE ENVELOPE VERIFIED', color: 'var(--dl-cyan)' }
+              : verificationStatus === 'invalid'
+                ? { label: 'NODE ENVELOPE INVALID', color: 'var(--dl-crimson)' }
+                : { label: 'NODE KEY UNVERIFIED', color: 'var(--dl-text-muted)' })
+            : (scope === 'local-integrity' && verification.signature_valid === true
+              ? { label: 'LEGACY LOCAL INTEGRITY VERIFIED', color: 'var(--dl-cyan)' }
+              : (scope === 'local-integrity' && verification.signature_valid === false
+                ? { label: 'LEGACY LOCAL INTEGRITY INVALID', color: 'var(--dl-crimson)' }
+                : { label: 'UNVERIFIED', color: 'var(--dl-text-muted)' }));
+
+        const fetchedChain = Array.isArray(verification?.provenance_chain)
+          ? verification.provenance_chain
+          : (Array.isArray(chain) ? chain : []);
+        const signature = verification?.envelope_signature || verification?.signature || btn.dataset.sig || '';
+        const signatureLabel = scope === 'deadletters-ed25519-v1' ? 'ED25519 ENVELOPE SIGNATURE' : 'LEGACY HMAC SIGNATURE';
+
+        const badge = btn.closest('.dl-reshare-card')?.querySelector('.provenance-badge');
+        if (badge) {
+          badge.textContent = status.label;
+          badge.style.color = status.color;
+        }
+
         App.openModal(`
           <div class="dl-modal-header">
-            <h3 style="font-size: 1.2rem;">CRYPTOGRAPHIC PROVENANCE ENVELOPE</h3>
-            <button class="dl-modal-close" onclick="App.closeModal()">✕</button>
+            <h3 style="font-size: 1.2rem;">PROVENANCE RECORD // ENVELOPE VERIFICATION</h3>
+            <button class="dl-modal-close" type="button" data-close-modal>✕</button>
           </div>
           <div style="font-family: var(--dl-font-mono); font-size: 0.78rem;">
-            <div style="margin-bottom: 1rem; color: var(--dl-accent);">
-              HMAC-SHA256 SIGNATURE:
-              <div style="color: #fff; word-break: break-all; margin-top: 0.25rem;">${btn.dataset.sig}</div>
+            <div style="margin-bottom: 1rem;">
+              <span style="color: var(--dl-text-muted);">LOCAL STATUS:</span>
+              <strong style="color: ${status.color}; margin-left: 0.5rem;">${escapeHtml(status.label)}</strong>
             </div>
-            <div style="margin-bottom: 0.5rem; color: var(--dl-text-muted);">RELAY HOP AUDIT:</div>
-            <pre style="background: #000; padding: 1rem; border: 1px solid var(--dl-border); overflow-x: auto;">${JSON.stringify(chain, null, 2)}</pre>
+            <div style="margin-bottom: 1rem; color: var(--dl-accent);">
+              ${escapeHtml(signatureLabel)}:
+              <div style="color: #fff; word-break: break-all; margin-top: 0.25rem;">${signature ? escapeHtml(signature) : 'NO SIGNATURE RECORDED'}</div>
+            </div>
+            <div style="margin-bottom: 0.5rem; color: var(--dl-text-muted);">
+              VERIFICATION SCOPE: ${escapeHtml(scope)}
+            </div>
+            ${verification?.key_id ? `<div style="margin-bottom: 0.5rem; color: var(--dl-text-muted); word-break: break-all;">KEY ID: ${escapeHtml(verification.key_id)}</div>` : ''}
+            ${verification?.envelope_hash ? `<div style="margin-bottom: 0.5rem; color: var(--dl-text-muted); word-break: break-all;">ENVELOPE HASH: ${escapeHtml(verification.envelope_hash)}</div>` : ''}
+            ${verification?.parent_envelope_hash ? `<div style="margin-bottom: 0.5rem; color: var(--dl-text-muted); word-break: break-all;">PARENT HASH: ${escapeHtml(verification.parent_envelope_hash)}</div>` : ''}
+            ${verification?.reason ? `<div style="margin-bottom: 0.5rem; color: var(--dl-text-muted);">RESULT: ${escapeHtml(verification.reason)}</div>` : ''}
+            <p style="color: var(--dl-text-muted); line-height: 1.6; margin-bottom: 1rem;">
+              Ed25519 verification authenticates this node's signed envelope and bound fields. It is not remote-key discovery, cross-node identity proof, or factual authorization of an external source.
+            </p>
+            <div style="margin-bottom: 0.5rem; color: var(--dl-text-muted);">PROVENANCE CHAIN:</div>
+            <pre style="background: #000; padding: 1rem; border: 1px solid var(--dl-border); overflow-x: auto;">${escapeHtml(JSON.stringify(fetchedChain, null, 2))}</pre>
           </div>
         `);
       });

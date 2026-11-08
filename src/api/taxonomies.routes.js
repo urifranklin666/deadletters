@@ -1,6 +1,7 @@
 const express = require('express');
 const { getDb } = require('../core/db');
 const { requireAuth } = require('../core/auth');
+const { CAPABILITIES, requireCapability } = require('../core/capabilities');
 
 const router = express.Router();
 
@@ -22,7 +23,7 @@ router.get('/categories', (req, res) => {
 });
 
 // POST /api/v1/taxonomies/categories
-router.post('/categories', requireAuth, (req, res) => {
+router.post('/categories', requireAuth, requireCapability(CAPABILITIES.TAXONOMIES_MANAGE), (req, res) => {
   const { name, description = '', parent = 0 } = req.body;
   if (!name) return res.status(400).json({ error: 'Category name required.' });
 

@@ -1,6 +1,6 @@
 /**
  * DEADLETTERS MEDIA VAULT
- * Asset repository & CDN-ready media management
+ * Local asset repository and upload management
  */
 
 const MediaVault = {
@@ -8,6 +8,8 @@ const MediaVault = {
     try {
       const res = await API.get('/api/v1/media');
       const media = res.media || [];
+      const canUpload = App.can('media:upload');
+      const canDelete = App.can('media:delete');
 
       container.innerHTML = `
         <div class="dl-admin-content">
@@ -18,21 +20,25 @@ const MediaVault = {
               </div>
               <h2 style="font-size: 1.8rem; font-weight: 800;">MEDIA VAULT</h2>
             </div>
-            <div>
-              <input type="file" id="vault-file-input" style="display: none;" multiple />
-              <button id="btn-vault-upload" class="dl-btn dl-btn-accent">+ UPLOAD ASSET</button>
-            </div>
+            ${canUpload ? `
+              <div>
+                <input type="file" id="vault-file-input" style="display: none;" accept=".jpg,.jpeg,.png,.gif,.webp,.mp4,.webm,.mp3,.wav,.ogg" multiple />
+                <button id="btn-vault-upload" class="dl-btn dl-btn-accent">+ UPLOAD ASSET</button>
+              </div>
+            ` : ''}
           </div>
 
           <!-- Drag and Drop Dropzone -->
-          <div id="vault-dropzone" style="border: 2px dashed var(--dl-border-strong); padding: 2.5rem; text-align: center; background: var(--dl-obsidian); margin-bottom: 2rem; cursor: pointer; transition: var(--dl-transition);">
-            <div style="font-family: var(--dl-font-mono); font-size: 0.85rem; color: var(--dl-accent); margin-bottom: 0.5rem;">
-              [ DRAG & DROP MEDIA ASSETS OR CLICK TO UPLOAD ]
+          ${canUpload ? `
+            <div id="vault-dropzone" style="border: 2px dashed var(--dl-border-strong); padding: 2.5rem; text-align: center; background: var(--dl-obsidian); margin-bottom: 2rem; cursor: pointer; transition: var(--dl-transition);">
+              <div style="font-family: var(--dl-font-mono); font-size: 0.85rem; color: var(--dl-accent); margin-bottom: 0.5rem;">
+                [ DRAG & DROP MEDIA ASSETS OR CLICK TO UPLOAD ]
+              </div>
+              <div style="font-size: 0.78rem; color: var(--dl-text-muted);">
+                Supports JPG, JPEG, PNG, GIF, WEBP, MP4, WEBM, MP3, WAV, and OGG up to 25 MiB. SVG is not accepted.
+              </div>
             </div>
-            <div style="font-size: 0.78rem; color: var(--dl-text-muted);">
-              Supports JPEG, PNG, WEBP, GIF, SVG, MP4, MP3 up to 25MB.
-            </div>
-          </div>
+          ` : ''}
 
           <!-- Asset Grid -->
           <div class="dl-media-grid">
@@ -43,7 +49,7 @@ const MediaVault = {
             ` : media.map(m => `
               <div class="dl-media-card">
                 ${m.isImage ? `
-                  <img src="${m.url}" class="dl-media-thumb" loading="lazy" />
+                  <img src="${escapeHtml(safeUrl(m.url))}" class="dl-media-thumb" loading="lazy" />
                 ` : `
                   <div class="dl-media-thumb" style="display: flex; align-items: center; justify-content: center; font-family: var(--dl-font-mono); font-size: 0.8rem; color: var(--dl-text-muted);">
                     FILE ASSET
@@ -53,11 +59,11 @@ const MediaVault = {
                   <div class="dl-media-name" title="${escapeHtml(m.filename)}">${escapeHtml(m.filename)}</div>
                   <div class="dl-media-meta">
                     <span>${Math.round(m.sizeBytes / 1024)} KB</span>
-                    <span style="color: var(--dl-accent);">${new Date(m.createdAt).toLocaleDateString()}</span>
+                    <span style="color: var(--dl-accent);">${escapeHtml(new Date(m.createdAt).toLocaleDateString())}</span>
                   </div>
                   <div style="display: flex; gap: 4px; margin-top: 0.5rem;">
-                    <button class="dl-btn dl-btn-outline dl-btn-sm btn-copy-url" data-url="${m.url}" style="flex: 1; padding: 2px 4px; font-size: 0.68rem;">COPY URL</button>
-                    <button class="dl-btn dl-btn-danger dl-btn-sm btn-delete-media" data-filename="${m.filename}" style="padding: 2px 6px; font-size: 0.68rem;">✕</button>
+                    <button class="dl-btn dl-btn-outline dl-btn-sm btn-copy-url" data-url="${escapeHtml(safeUrl(m.url))}" style="flex: 1; padding: 2px 4px; font-size: 0.68rem;">COPY URL</button>
+                    ${canDelete ? `<button class="dl-btn dl-btn-danger dl-btn-sm btn-delete-media" data-filename="${escapeHtml(m.filename)}" style="padding: 2px 6px; font-size: 0.68rem;">✕</button>` : ''}
                   </div>
                 </div>
               </div>
@@ -68,7 +74,7 @@ const MediaVault = {
 
       this.bindVaultEvents(container);
     } catch (err) {
-      container.innerHTML = `<div class="dl-admin-content"><div class="dl-card" style="border-color: var(--dl-crimson);">Vault error: ${err.message}</div></div>`;
+      container.innerHTML = `<div class="dl-admin-content"><div class="dl-card" style="border-color: var(--dl-crimson);">Vault error: ${escapeHtml(err.message)}</div></div>`;
     }
   },
 
@@ -76,20 +82,6 @@ const MediaVault = {
     const dropzone = container.querySelector('#vault-dropzone');
     const fileInput = container.querySelector('#vault-file-input');
     const uploadBtn = container.querySelector('#btn-vault-upload');
-
-    uploadBtn.addEventListener('click', () => fileInput.click());
-    dropzone.addEventListener('click', () => fileInput.click());
-
-    dropzone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      dropzone.style.borderColor = 'var(--dl-accent)';
-      dropzone.style.backgroundColor = 'var(--dl-surface)';
-    });
-
-    dropzone.addEventListener('dragleave', () => {
-      dropzone.style.borderColor = 'var(--dl-border-strong)';
-      dropzone.style.backgroundColor = 'var(--dl-obsidian)';
-    });
 
     const handleUploadFiles = async (files) => {
       if (!files || files.length === 0) return;
@@ -105,15 +97,33 @@ const MediaVault = {
       this.render(container);
     };
 
-    dropzone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropzone.style.borderColor = 'var(--dl-border-strong)';
-      handleUploadFiles(e.dataTransfer.files);
-    });
+    if (uploadBtn && fileInput) {
+      uploadBtn.addEventListener('click', () => fileInput.click());
+      fileInput.addEventListener('change', (e) => {
+        handleUploadFiles(e.target.files);
+      });
+    }
 
-    fileInput.addEventListener('change', (e) => {
-      handleUploadFiles(e.target.files);
-    });
+    if (dropzone && fileInput) {
+      dropzone.addEventListener('click', () => fileInput.click());
+
+      dropzone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropzone.style.borderColor = 'var(--dl-accent)';
+        dropzone.style.backgroundColor = 'var(--dl-surface)';
+      });
+
+      dropzone.addEventListener('dragleave', () => {
+        dropzone.style.borderColor = 'var(--dl-border-strong)';
+        dropzone.style.backgroundColor = 'var(--dl-obsidian)';
+      });
+
+      dropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropzone.style.borderColor = 'var(--dl-border-strong)';
+        handleUploadFiles(e.dataTransfer.files);
+      });
+    }
 
     // Copy URL
     container.querySelectorAll('.btn-copy-url').forEach(btn => {
@@ -128,7 +138,7 @@ const MediaVault = {
       btn.addEventListener('click', async () => {
         if (confirm('Vaporize asset from media vault?')) {
           try {
-            await API.del(`/api/v1/media/${btn.dataset.filename}`);
+            await API.del(`/api/v1/media/${encodeURIComponent(btn.dataset.filename)}`);
             App.showToast('Asset vaporized.');
             this.render(container);
           } catch (e) {

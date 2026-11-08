@@ -1,14 +1,10 @@
 {
   "slug": "telemetry-vault",
-  "name": "Deadplug Enterprise License Vault",
-  "version": "1.0.0",
+  "name": "Local Telemetry & License Status",
+  "version": "1.1.0",
   "author": "deadplug.digital",
-  "description": "Enterprise licensing verification, commercial node telemetry, and white-label client deployment controls for Deadletters engine.",
+  "description": "Adds local build and proprietary license status to superadmin telemetry. It performs no remote license verification or heartbeat.",
   "entry": "index.js",
   "is_active": 1,
-  "settings": {
-    "license_tier": "Enterprise / Atelier Fleet",
-    "license_key": "DP-ENT-2026-X7710-UNLIMITED",
-    "heartbeat_interval_sec": 3600
-  }
+  "settings": {}
 }
